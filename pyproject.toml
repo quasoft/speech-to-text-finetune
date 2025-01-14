@@ -3,14 +3,19 @@ requires = ["setuptools>=48", "setuptools_scm[toml]>=6.3.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "blueprint"
+name = "speech-to-text-finetune"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dynamic = ["version"]
 dependencies = [
+  "accelerate",
+  "datasets[audio]",
+  "evaluate",
+  "gradio",
   "loguru",
-  "streamlit",
+  "tensorboard",
+  "transformers",
 ]
 
 [project.optional-dependencies]
@@ -26,9 +31,9 @@ tests = [
 ]
 
 [project.urls]
-Documentation = "https://mozilla-ai.github.io/Blueprint-template/"
-Issues = "https://github.com/mozilla-ai/Blueprint-template/issues"
-Source = "https://github.com/mozilla-ai/Blueprint-template"
+Documentation = "https://mozilla-ai.github.io/speech-to-text-finetune/"
+Issues = "https://github.com/mozilla-ai/speech-to-text-finetune/issues"
+Source = "https://github.com/mozilla-ai/speech-to-text-finetune"
 
 [tool.setuptools.packages.find]
 exclude = ["tests", "tests.*"]

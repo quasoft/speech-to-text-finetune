@@ -1,3 +1,3 @@
 # API Reference
 
-"::: blueprint.hello"
+"::: speech_to_text_finetune.train"

@@ -25,7 +25,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: mzdotai/blueprint
+          images: mzdotai/speech-to-text-finetune
           flavor: |
             latest=auto
 
