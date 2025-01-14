@@ -30,6 +30,9 @@ This blueprint guides you to ...
 
 ## Troubleshooting
 
+> I am getting this error: `ValueError: ffmpeg was not found but is required to load audio files from filename`.
+
+Follow the installation instructions for your OS from this link: https://ffmpeg.org/download.html, e.g. for Ubuntu: `sudo apt install ffmpeg`
 
 ## License
 
