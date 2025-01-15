@@ -9,6 +9,7 @@ from transformers import (
     Seq2SeqTrainingArguments,
     EvalPrediction,
 )
+import torch
 from datasets import Audio
 from typing import Dict
 from language_registry import common_voice_languages
@@ -55,13 +56,17 @@ def run_finetuning(
         repo_name = f"{hf_username}/{model_id.split('/')[1]}-{language_id}"
 
     logger.info(
-        f"Finetuning job started. Results will be uploaded to {repo_name}. Private repo is set to {make_repo_private}."
+        f"Finetuning job will soon start. "
+        f"Results will be uploaded to {repo_name}. "
+        f"Private repo is set to {make_repo_private}."
     )
 
     logger.info(f"Loading the {language} subset from the {dataset_id} dataset.")
     dataset = load_common_voice(dataset_id, language_id)
 
-    logger.info(f"Loading {model_id} and configuring it for {language}.")
+    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+
+    logger.info(f"Loading {model_id} on {device} and configuring it for {language}.")
     feature_extractor = WhisperFeatureExtractor.from_pretrained(model_id)
     tokenizer = WhisperTokenizer.from_pretrained(
         model_id, language=language, task="transcribe"
