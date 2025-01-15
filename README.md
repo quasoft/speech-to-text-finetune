@@ -12,6 +12,8 @@ This blueprint guides you to ...
 
 ## Quick-start
 
+1. Select the language you want to finetune on
+2. Common Voice is using this https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes to map languages to unique identifiers. Find your language and the correct language identifier (Set 1) and use it as input.
 
 ## How it Works
 
