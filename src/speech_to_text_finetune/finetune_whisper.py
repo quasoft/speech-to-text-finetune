@@ -12,7 +12,6 @@ from transformers import (
 import torch
 from datasets import Audio
 from typing import Dict, Tuple
-from language_registry import common_voice_languages
 import evaluate
 from evaluate import EvaluationModule
 from loguru import logger
@@ -24,6 +23,7 @@ from data import (
 from hf_utils import (
     get_hf_username,
     upload_custom_hf_model_card,
+    get_available_languages_in_cv,
 )
 
 hf_username = get_hf_username()
@@ -52,7 +52,8 @@ def run_finetuning(
         Tuple[Dict, Dict]: evaluation metrics from the baseline and the finetuned models
     """
 
-    language_id = common_voice_languages[language]
+    languages_name_to_id = get_available_languages_in_cv(dataset_id)
+    language_id = languages_name_to_id[language]
 
     if not repo_name:
         repo_name = f"{model_id.split('/')[1]}-{language_id}"
