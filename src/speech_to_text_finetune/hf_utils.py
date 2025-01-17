@@ -26,7 +26,7 @@ def get_available_languages_in_cv(dataset_id: str) -> Dict:
     Returns:
         Dict: A language mapping dictionary in the format {<Full language name>: <ISO-639-id>} , e.g. {'Abkhaz': 'ab'}
     """
-    lang_map_file_name = f"languages_{dataset_id.split('/')[1]}.json"
+    lang_map_file_name = f"./artifacts/languages_{dataset_id.split('/')[1]}.json"
 
     if Path(lang_map_file_name).is_file():
         logger.info(f"Found {lang_map_file_name} locally, loading the dictionary.")
@@ -50,6 +50,7 @@ def get_available_languages_in_cv(dataset_id: str) -> Dict:
     lang_name_to_id = dict((v, k) for k, v in lang_id_to_name.items())
 
     logger.info(f"Saving {lang_map_file_name} locally to use it next time.")
+    Path("./artifacts").mkdir(exist_ok=True)
     with open(lang_map_file_name, "w") as lang_file:
         json.dump(lang_name_to_id, lang_file, indent=4)
 
