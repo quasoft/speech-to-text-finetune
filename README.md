@@ -45,7 +45,7 @@ This blueprint consists of three independent, yet complementary, components:
    2. Finetune a model: `python src/speech_to_text_finetune/finetune_whisper.py`
 4. Try again the transcription app with your newly finetuned model.
 5. If the results are still not satisfactory, create your own Speech-to-Text dataset and model.
-   1. Create a dataset: `python demo/make_local_dataset_app.py`
+   1. Create a dataset: `python src/speech_to_text_finetune/make_local_dataset_app.py`
    2. Configure `config.yaml` with the model, local data directory and hyperparameters of your choice.
    3. Finetune a model: `python src/speech_to_text_finetune/finetune_whisper.py`
 6. Finally try again the transcription app with the new model finetuned specifically for your own voice!
