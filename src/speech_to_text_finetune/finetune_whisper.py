@@ -46,7 +46,6 @@ def run_finetuning(
     """
     cfg = load_config(config_path)
 
-
     with open(languages_path) as json_file:
         languages_name_to_id = json.load(json_file)
     language_id = languages_name_to_id[cfg.language]
