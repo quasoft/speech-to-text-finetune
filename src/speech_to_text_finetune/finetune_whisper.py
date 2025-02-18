@@ -46,7 +46,6 @@ def run_finetuning(
     """
     cfg = load_config(config_path)
 
-    hf_username = get_hf_username()
 
     with open(languages_path) as json_file:
         languages_name_to_id = json.load(json_file)
@@ -54,11 +53,13 @@ def run_finetuning(
 
     if cfg.repo_name == "default":
         cfg.repo_name = f"{cfg.model_id.split('/')[1]}-{language_id}"
-    hf_repo_name = f"{hf_username}/{cfg.repo_name}"
     local_output_dir = f"./artifacts/{cfg.repo_name}"
 
     logger.info(f"Finetuning starts soon, results saved locally at {local_output_dir}")
+    hf_repo_name = ""
     if cfg.training_hp.push_to_hub:
+        hf_username = get_hf_username()
+        hf_repo_name = f"{hf_username}/{cfg.repo_name}"
         logger.info(
             f"Results will also be uploaded in HF at {hf_repo_name}. "
             f"Private repo is set to {cfg.training_hp.hub_private_repo}."
