@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import Tuple
 import gradio as gr
+import spaces
 from transformers import pipeline, Pipeline
 from huggingface_hub import repo_exists
 
@@ -75,6 +76,7 @@ def load_model(
         )
 
 
+@spaces.GPU
 def transcribe(pipe: Pipeline, audio: gr.Audio) -> str:
     text = pipe(audio)["text"]
     return text
