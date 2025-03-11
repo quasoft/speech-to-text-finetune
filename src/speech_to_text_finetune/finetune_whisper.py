@@ -21,6 +21,7 @@ from speech_to_text_finetune.data_process import (
     load_local_dataset,
     DataCollatorSpeechSeq2SeqWithPadding,
     process_dataset,
+    load_subset_of_dataset,
 )
 from speech_to_text_finetune.hf_utils import (
     get_hf_username,
@@ -65,6 +66,9 @@ def run_finetuning(
         dataset = load_local_dataset(cfg.dataset_id, train_split=0.8)
     else:
         raise ValueError(f"Unknown dataset source {cfg.dataset_source}")
+
+    dataset["train"] = load_subset_of_dataset(dataset["train"], cfg.n_train_samples)
+    dataset["test"] = load_subset_of_dataset(dataset["test"], cfg.n_test_samples)
 
     device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
 
