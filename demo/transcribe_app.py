@@ -31,16 +31,9 @@ def get_dropdown_model_ids():
 
 
 def _load_local_model(model_dir: str) -> Pipeline | str:
-    from transformers import (
-        WhisperProcessor,
-        WhisperTokenizer,
-        WhisperFeatureExtractor,
-        WhisperForConditionalGeneration,
-    )
+    from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
     processor = WhisperProcessor.from_pretrained(model_dir)
-    tokenizer = WhisperTokenizer.from_pretrained(model_dir, task="transcribe")
-    feature_extractor = WhisperFeatureExtractor.from_pretrained(model_dir)
     model = WhisperForConditionalGeneration.from_pretrained(model_dir)
 
     try:
@@ -48,8 +41,6 @@ def _load_local_model(model_dir: str) -> Pipeline | str:
             task="automatic-speech-recognition",
             model=model,
             processor=processor,
-            tokenizer=tokenizer,
-            feature_extractor=feature_extractor,
             chunk_length_s=30,  # max input duration for whisper
         )
     except Exception as e:

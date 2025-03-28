@@ -10,18 +10,14 @@ import torch
 from dataclasses import dataclass
 from typing import Dict, List, Union, Tuple
 
-from transformers import (
-    WhisperFeatureExtractor,
-    WhisperTokenizer,
-    WhisperProcessor,
-)
+from transformers import WhisperProcessor
 from datasets import load_dataset, DatasetDict, Audio, Dataset, load_from_disk
 from loguru import logger
 
 
 def try_find_processed_version(
     dataset_id: str, language_id: str | None = None
-) -> DatasetDict | None:
+) -> DatasetDict | Dataset | None:
     """
     Try to load a processed version of the dataset if it exists locally. Check if:
     1. The dataset_id is a local path to an already processed dataset directory.
@@ -68,7 +64,6 @@ def _get_local_proc_dataset_path(dataset_id: str) -> str:
 def load_dataset_from_dataset_id(
     dataset_id: str,
     language_id: str | None = None,
-    local_train_split: float | None = 0.8,
 ) -> Tuple[DatasetDict, str]:
     """
     This function loads a dataset, based on the dataset_id and the content of its directory (if it is a local path).
@@ -82,7 +77,6 @@ def load_dataset_from_dataset_id(
     Args:
         dataset_id: Path to a processed dataset directory or local dataset directory or HuggingFace dataset ID.
         language_id (Only used for the HF dataset case): Language identifier for the dataset (e.g., 'en' for English)
-        local_train_split: (Only used for local datasets) Percentage split of train/test sets
 
     Returns:
         DatasetDict: A processed dataset ready for training with train/test splits
@@ -92,13 +86,13 @@ def load_dataset_from_dataset_id(
         ValueError: If the dataset cannot be found locally or on HuggingFace
     """
     try:
-        dataset = _load_local_common_voice(dataset_id, train_split=local_train_split)
+        dataset = _load_local_common_voice(dataset_id)
         return dataset, _get_local_proc_dataset_path(dataset_id)
     except FileNotFoundError:
         pass
 
     try:
-        dataset = _load_custom_dataset(dataset_id, train_split=local_train_split)
+        dataset = _load_custom_dataset(dataset_id)
         return dataset, _get_local_proc_dataset_path(dataset_id)
     except FileNotFoundError:
         pass
@@ -141,74 +135,54 @@ def _load_hf_common_voice(dataset_id: str, language_id: str) -> DatasetDict:
         split="test",
         trust_remote_code=True,
     )
-    common_voice = common_voice.remove_columns(
-        [
-            "accent",
-            "age",
-            "client_id",
-            "down_votes",
-            "gender",
-            "locale",
-            "path",
-            "segment",
-            "up_votes",
-        ]
-    )
+    common_voice = common_voice.select_columns(["audio", "sentence"])
 
     return common_voice
 
 
-def _load_local_common_voice(cv_data_dir: str, train_split: float = 0.8) -> DatasetDict:
+def _load_local_common_voice(cv_data_dir: str) -> DatasetDict:
     """
     Load a local Common Voice dataset (as downloaded from the official Common Voice website) into a DatasetDict.
     We only use the validated.tsv file to source the data to use for both training and testing.
 
     Args:
         cv_data_dir (str): path to the local Common Voice dataset directory
-        train_split (str): percentage split of the dataset to train+validation and test set
 
     Returns:
         DatasetDict: HF Dataset dictionary that consists of two distinct Datasets (train+validation and test)
     """
     cv_data_dir = Path(cv_data_dir)
-    validated_df = pd.read_csv(cv_data_dir / "validated_sentences.tsv", sep="\t")
-    other_df = pd.read_csv(cv_data_dir / "other.tsv", sep="\t")
+    train_df = pd.read_csv(cv_data_dir / "train.tsv", sep="\t")
+    test_df = pd.read_csv(cv_data_dir / "test.tsv", sep="\t")
 
-    # Map sentence_id to sentences to then use the sentence_id to pull the correct audio path from other.tsv
-    sentence_map = dict(zip(validated_df["sentence_id"], validated_df["sentence"]))
-
-    # Filter out the rows that don't have a corresponding sentence_id in the sentence_map
-    other_df = other_df[other_df["sentence_id"].isin(sentence_map)]
-
-    # Write the full audio clip path
-    other_df["audio_clip_path"] = other_df["path"].apply(
-        lambda p: cv_data_dir / "clips" / p
+    # Replace relative path with absolute
+    train_df = train_df.rename(columns={"path": "audio"})
+    train_df["audio"] = train_df["audio"].apply(
+        lambda p: str(cv_data_dir / "clips" / p)
     )
 
-    dataset_df = pd.DataFrame(
+    test_df = test_df.rename(columns={"path": "audio"})
+    test_df["audio"] = test_df["audio"].apply(lambda p: str(cv_data_dir / "clips" / p))
+
+    return DatasetDict(
         {
-            "index": other_df.index,
-            "sentence": other_df["sentence_id"].map(
-                lambda i: sentence_map[i].replace('"', "")
-            ),  # remove " characters
-            "audio": other_df["audio_clip_path"].astype(str),
-            "sentence_id": other_df["sentence_id"],
+            "train": Dataset.from_pandas(train_df),
+            "test": Dataset.from_pandas(test_df),
         }
     )
 
-    train_index = round(len(dataset_df) * train_split)
 
-    dataset = DatasetDict(
-        {
-            "train": Dataset.from_pandas(dataset_df.iloc[:train_index]),
-            "test": Dataset.from_pandas(dataset_df.iloc[train_index:]),
-        }
+def _get_audio_files_from_dir(dataset_dir: str) -> List[str]:
+    return sorted(
+        [
+            f"{dataset_dir}/{f}"
+            for f in os.listdir(f"{dataset_dir}")
+            if f.endswith(".wav") or f.endswith(".mp3")
+        ],
     )
 
-    return dataset
 
-
-def _load_custom_dataset(dataset_dir: str, train_split: float = 0.8) -> DatasetDict:
+def _load_custom_dataset(dataset_dir: str) -> DatasetDict:
     """
     Load sentences and accompanied recorded audio files into a pandas DataFrame, then split into train/test and finally
     load it into two distinct train Dataset and test Dataset.
@@ -217,54 +191,123 @@ def _load_custom_dataset(dataset_dir: str, train_split: float = 0.8) -> DatasetD
 
     Args:
         dataset_dir (str): path to the local dataset, expecting a text.csv and .wav files under the directory
-        train_split (float): percentage split of the dataset to train+validation and test set
 
     Returns:
         DatasetDict: HF Dataset dictionary that consists of two distinct Datasets (train+validation and test)
     """
-    text_file = dataset_dir + "/text.csv"
+    train_file = dataset_dir + "/train/text.csv"
+    train_dir = dataset_dir + "/train/clips"
+    test_file = dataset_dir + "/test/text.csv"
+    test_dir = dataset_dir + "/test/clips"
 
-    dataframe = pd.read_csv(text_file)
-    audio_files = sorted(
-        [
-            f"{dataset_dir}/{f}"
-            for f in os.listdir(dataset_dir)
-            if f.endswith(".wav") or f.endswith(".mp3")
-        ],
+    train_df = pd.read_csv(train_file)
+    test_df = pd.read_csv(test_file)
+
+    train_df["audio"] = _get_audio_files_from_dir(train_dir)
+    test_df["audio"] = _get_audio_files_from_dir(test_dir)
+
+    return DatasetDict(
+        {
+            "train": Dataset.from_pandas(train_df),
+            "test": Dataset.from_pandas(test_df),
+        }
     )
 
-    dataframe["audio"] = audio_files
-    train_index = round(len(dataframe) * train_split)
 
-    my_data = DatasetDict()
-    my_data["train"] = Dataset.from_pandas(dataframe[:train_index])
-    my_data["test"] = Dataset.from_pandas(dataframe[train_index:])
+def load_and_proc_hf_fleurs(
+    language_id: str,
+    n_test_samples: int,
+    processor: WhisperProcessor,
+    eval_batch_size: int,
+) -> Dataset:
+    """
+    Load only the test split of fleurs on a specific language and process it for Whisper.
+    Args:
+        language_id (str): a registered language identifier from Fleurs
+            (see https://huggingface.co/datasets/google/fleurs/blob/main/fleurs.py)
+        n_test_samples (int): number of samples to use from the test split
+        processor (WhisperProcessor): Processor from Whisper to process the dataset
+        eval_batch_size (int): batch size to use for processing the dataset
 
-    return my_data
+    Returns:
+        DatasetDict: HF Dataset
+    """
+    fleurs_dataset_id = "google/fleurs"
+    if proc_dataset := try_find_processed_version(fleurs_dataset_id, language_id):
+        return proc_dataset
+
+    dataset = load_dataset(
+        fleurs_dataset_id, language_id, trust_remote_code=True, split="test"
+    )
+    dataset = load_subset_of_dataset(dataset, n_test_samples)
+
+    dataset = dataset.rename_column(
+        original_column_name="raw_transcription", new_column_name="sentence"
+    )
+    dataset = dataset.select_columns(["audio", "sentence"])
+
+    save_proc_dataset_path = _get_hf_proc_dataset_path(fleurs_dataset_id, language_id)
+    logger.info("Processing dataset...")
+    dataset = process_dataset(
+        dataset=dataset,
+        processor=processor,
+        batch_size=eval_batch_size,
+        proc_dataset_path=save_proc_dataset_path,
+    )
+    logger.info(
+        f"Processed dataset saved at {save_proc_dataset_path}. Future runs of {fleurs_dataset_id} will "
+        f"automatically use this processed version."
+    )
+    return dataset
 
 
 def load_subset_of_dataset(dataset: Dataset, n_samples: int) -> Dataset:
     return dataset.select(range(n_samples)) if n_samples != -1 else dataset
 
 
+def _is_audio_in_length_range(length: float, max_input_length: float = 30.0) -> bool:
+    return 0 < length < max_input_length
+
+
+def _are_labels_in_length_range(labels: List[int], max_label_length: int = 448) -> bool:
+    return len(labels) < max_label_length
+
+
 def process_dataset(
-    dataset: DatasetDict,
-    feature_extractor: WhisperFeatureExtractor,
-    tokenizer: WhisperTokenizer,
+    dataset: DatasetDict | Dataset,
+    processor: WhisperProcessor,
+    batch_size: int,
     proc_dataset_path: str,
-) -> DatasetDict:
+) -> DatasetDict | Dataset:
     """
     Process dataset to the expected format by a Whisper model and then save it locally for future use.
-    A flag file is also saved in that directory that will be used in future runs to check if the dataset
-    is already processed.
     """
     # Create a new column that consists of the resampled audio samples in the right sample rate for whisper
-    dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+    dataset = dataset.cast_column(
+        "audio", Audio(sampling_rate=processor.feature_extractor.sampling_rate)
+    )
 
     dataset = dataset.map(
         _process_inputs_and_labels_for_whisper,
-        fn_kwargs={"feature_extractor": feature_extractor, "tokenizer": tokenizer},
-        remove_columns=dataset.column_names["train"],
+        fn_kwargs={"processor": processor},
+        remove_columns=dataset.column_names["train"]
+        if "train" in dataset.column_names
+        else None,
+        batched=True,
+        batch_size=batch_size,
+        num_proc=1,
+    )
+
+    dataset = dataset.filter(
+        _is_audio_in_length_range,
+        input_columns=["input_length"],
+        fn_kwargs={"max_input_length": 30.0},
+        num_proc=1,
+    )
+    dataset = dataset.filter(
+        _are_labels_in_length_range,
+        input_columns=["labels"],
+        fn_kwargs={"max_label_length": 448},
         num_proc=1,
     )
 
@@ -275,20 +318,25 @@ def process_dataset(
 
 
 def _process_inputs_and_labels_for_whisper(
-    batch: Dict, feature_extractor: WhisperFeatureExtractor, tokenizer: WhisperTokenizer
+    batch: Dict, processor: WhisperProcessor
 ) -> Dict:
     """
     Use Whisper's feature extractor to transform the input audio arrays into log-Mel spectrograms
      and the tokenizer to transform the text-label into tokens. This function is expected to be called using
      the .map method in order to process the data batch by batch.
     """
-    audio = batch["audio"]
+    batched_audio = batch["audio"]
 
-    batch["input_features"] = feature_extractor(
-        audio["array"], sampling_rate=audio["sampling_rate"]
-    ).input_features[0]
+    batch = processor(
+        audio=[audio["array"] for audio in batched_audio],
+        sampling_rate=processor.feature_extractor.sampling_rate,
+        text=batch["sentence"],
+    )
 
-    batch["labels"] = tokenizer(batch["sentence"]).input_ids
+    batch["input_length"] = [
+        len(audio["array"]) / audio["sampling_rate"] for audio in batched_audio
+    ]
+
     return batch
 
 
@@ -300,12 +348,12 @@ class DataCollatorSpeechSeq2SeqWithPadding:
     """
 
     processor: WhisperProcessor
-    decoder_start_token_id: int
 
     def __call__(
         self, features: List[Dict[str, Union[List[int], torch.Tensor]]]
     ) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need different padding methods
+        # first treat the audio inputs by simply returning torch tensors
         input_features = [
             {"input_features": feature["input_features"]} for feature in features
         ]
@@ -323,8 +371,9 @@ class DataCollatorSpeechSeq2SeqWithPadding:
             labels_batch.attention_mask.ne(1), -100
         )
 
-        # if labels already have a bos token, remove it since its appended later
-        if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
+        # if bos token is appended in previous tokenization step,
+        # cut bos token here as it's append later anyway
+        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
             labels = labels[:, 1:]
 
         batch["labels"] = labels
