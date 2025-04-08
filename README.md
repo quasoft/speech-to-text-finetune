@@ -35,6 +35,7 @@ This blueprint enables you to create your own [Speech-to-Text](https://en.wikipe
 
 <img src="./images/speech-to-text-finetune-diagram.png" width="1200" alt="speech-to-text-finetune Diagram" />
 
+
 ## Example result on Galician
 
 Input Speech audio:
@@ -49,6 +50,8 @@ Text output:
 | O Comité Económico e Social Europeo deu luz verde esta terza feira ao uso de galego, euskera e catalán nas súas sesións plenarias, segundo informou o Ministerio de Asuntos Exteriores nun comunicado no que se felicitou da decisión. | O Comité Económico Social Europeo de Uluz Verde está terza feira a Ousse de Gallego e Uskera e Catalan a súas asesións planarias, segundo informou o Ministerio de Asuntos Exteriores nun comunicado no que se felicitou da decisión. | O Comité Económico Social Europeo deu luz verde esta terza feira ao uso de galego e usquera e catalán nas súas sesións planarias, segundo informou o Ministerio de Asuntos Exteriores nun comunicado no que se felicitou da decisión. |
 
 \* Finetuned on the Galician set Common Voice 17.0
+
+👀 You can find a list of finetuned models, created by this Blueprint, on our HuggingFace [collection](https://huggingface.co/collections/mozilla-ai/common-voice-whisper-67b847a74ad7561781aa10fd).
 
 ## Quick-start
 
