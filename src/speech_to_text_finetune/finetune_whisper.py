@@ -176,7 +176,10 @@ def run_finetuning(
 
     if cfg.training_hp.push_to_hub:
         logger.info(f"Uploading model and eval results to HuggingFace: {hf_repo_name}")
-        trainer.push_to_hub()
+        try:
+            trainer.push_to_hub()
+        except Exception as e:
+            logger.info(f"Did not manage to upload final model. See: \n{e}")
         model_card.push_to_hub(hf_repo_name)
 
     logger.info(f"Find your final, best performing model at {local_output_dir}")
