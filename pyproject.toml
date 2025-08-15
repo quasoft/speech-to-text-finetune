@@ -16,7 +16,7 @@ dependencies = [
   "jiwer",
   "loguru",
   "tensorboard",
-  "transformers",
+  "transformers==4.51.3",
 ]
 
 [project.optional-dependencies]
