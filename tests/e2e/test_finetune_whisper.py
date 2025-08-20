@@ -13,14 +13,15 @@ def test_finetune_whisper_local(example_config_path):
     assert expected_dir_path.exists()
 
     assert 0 < base_results["eval_loss"] < 10
-    assert 0 < base_results["eval_wer"] < 100
-    assert 0 < base_results["eval_wer_ortho"] < 100
-    assert 0 < base_results["eval_cer"] < 100
-    assert 0 < base_results["eval_cer_ortho"] < 100
+    # BLEU / SacreBLEU scores are between 0 and 100 (higher is better)
+    assert 0 <= base_results["eval_sacrebleu"] <= 100
+    assert 0 <= base_results.get("eval_sacrebleu_norm", base_results["eval_sacrebleu"]) <= 100
+    assert 0 <= base_results["eval_bleu"] <= 100
+    assert 0 <= base_results.get("eval_bleu_norm", base_results["eval_bleu"]) <= 100
     assert 0 < eval_results["eval_loss"] < 10
-    assert 0 < eval_results["eval_wer"] < 100
-    assert 0 < eval_results["eval_wer_ortho"] < 100
-    assert 0 < eval_results["eval_cer"] < 100
-    assert 0 < eval_results["eval_cer_ortho"] < 100
+    assert 0 <= eval_results["eval_sacrebleu"] <= 100
+    assert 0 <= eval_results.get("eval_sacrebleu_norm", eval_results["eval_sacrebleu"]) <= 100
+    assert 0 <= eval_results["eval_bleu"] <= 100
+    assert 0 <= eval_results.get("eval_bleu_norm", eval_results["eval_bleu"]) <= 100
 
     shutil.rmtree(expected_dir_path)

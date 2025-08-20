@@ -71,7 +71,7 @@ def run_finetuning(
         f"Loading {cfg.model_id} on {device} and configuring it for {cfg.language}."
     )
     processor = WhisperProcessor.from_pretrained(
-        cfg.model_id, language=cfg.language, task="transcribe"
+        cfg.model_id, language=cfg.language, task="translate"
     )
     model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
 
@@ -79,7 +79,7 @@ def run_finetuning(
     model.config.use_cache = False
     # set language and task for generation during inference and re-enable cache
     model.generate = partial(
-        model.generate, language=cfg.language.lower(), task="transcribe", use_cache=True
+        model.generate, language=cfg.language.lower(), task="translate", use_cache=True
     )
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
@@ -120,8 +120,8 @@ def run_finetuning(
             f"automatically use this processed version."
         )
 
-    wer = evaluate.load("wer")
-    cer = evaluate.load("cer")
+    bleu = evaluate.load("bleu")
+    sacrebleu = evaluate.load("sacrebleu")
 
     trainer = Seq2SeqTrainer(
         args=training_args,
@@ -132,8 +132,8 @@ def run_finetuning(
         compute_metrics=partial(
             compute_wer_cer_metrics,
             processor=processor,
-            wer=wer,
-            cer=cer,
+            bleu=bleu,
+            sacrebleu=sacrebleu,
             normalizer=BasicTextNormalizer(),
         ),
         processing_class=processor.feature_extractor,
