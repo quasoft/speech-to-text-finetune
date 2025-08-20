@@ -11,31 +11,32 @@ from transformers import EvalPrediction, WhisperProcessor
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 
 
-def compute_bleu_metrics(
+def compute_wer_cer_metrics(
     pred: EvalPrediction,
     processor: WhisperProcessor,
-    bleu: EvaluationModule,
-    sacrebleu: EvaluationModule,
+    wer: EvaluationModule,
+    cer: EvaluationModule,
     normalizer: BasicTextNormalizer,
 ) -> Dict:
     """
-    Compute BLEU and SacreBLEU metrics for a speech translation task.
+    Word Error Rate (wer) is a metric that measures the ratio of errors the ASR model makes given a transcript to the
+    total words spoken. Lower is better.
+    Character Error Rate (cer) is similar to wer, but operates on character instead of word. This metric is better
+    suited for languages with no concept of "word" like Chinese or Japanese. Lower is better.
 
-    BLEU / SacreBLEU are standard MT metrics (higher is better). We additionally
-    report a "normalized" variant where Whisper's BasicTextNormalizer is applied
-    (lower‑casing, punctuation handling, etc.) prior to scoring. Normalization can
-    reduce surface-form variance and give a complementary view of quality.
+    More info: https://huggingface.co/learn/audio-course/en/chapter5/fine-tuning#evaluation-metrics
+
+    Note 1: WER/CER can be larger than 1.0, if the number of insertions I is larger than the number of correct words C.
+    Note 2: WER/CER doesn't tell the whole story and is not fully representative of the quality of the ASR model.
 
     Args:
-        pred: EvalPrediction with model prediction token ids and label token ids.
-        processor: WhisperProcessor used to decode token ids to text.
-        bleu: evaluate.load("bleu") metric module (returns keys: bleu, precisions, ...).
-        sacrebleu: evaluate.load("sacrebleu") metric module (returns keys: score, ...).
-        normalizer: BasicTextNormalizer for optional normalized scoring.
-
+        pred (EvalPrediction): Transformers object that holds predicted tokens and ground truth labels
+        processor (WhisperProcessor): Whisper processor used to decode tokens to strings
+        wer (EvaluationModule): module that calls the computing function for WER
+        cer (EvaluationModule): module that calls the computing function for CER
+        normalizer (BasicTextNormalizer): Normalizer from Whisper
     Returns:
-        Dict containing raw and normalized BLEU / SacreBLEU scores:
-            bleu, sacrebleu, bleu_norm, sacrebleu_norm
+        wer (Dict): computed WER metric
     """
 
     pred_ids = pred.predictions
@@ -47,38 +48,30 @@ def compute_bleu_metrics(
     # we do not want to group tokens when computing the metrics
     pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True)
     label_str = processor.batch_decode(label_ids, skip_special_tokens=True)
-    # evaluate expects references as list[list[str]] for MT metrics
-    references = [[ref] for ref in label_str]
 
-    bleu_res = bleu.compute(predictions=pred_str, references=references)
-    sacrebleu_res = sacrebleu.compute(predictions=pred_str, references=references)
+    # compute orthographic wer
+    wer_ortho = 100 * wer.compute(predictions=pred_str, references=label_str)
+    cer_ortho = 100 * cer.compute(predictions=pred_str, references=label_str)
 
-    # Normalized versions
-    pred_str_norm = [normalizer(p) for p in pred_str]
-    label_str_norm = [normalizer(l) for l in label_str]
-    # Keep only non-empty normalized references
-    filtered_preds = []
-    filtered_refs = []
-    for p, r in zip(pred_str_norm, label_str_norm):
-        if r.strip():
-            filtered_preds.append(p)
-            filtered_refs.append([r])  # still list[list[str]]
+    # compute normalised WER
+    pred_str_norm = [normalizer(pred) for pred in pred_str]
+    label_str_norm = [normalizer(label) for label in label_str]
+    # filtering step to only evaluate the samples that correspond to non-zero references:
+    pred_str_norm = [
+        pred_str_norm[i]
+        for i in range(len(pred_str_norm))
+        if len(label_str_norm[i]) > 0
+    ]
+    label_str_norm = [
+        label_str_norm[i]
+        for i in range(len(label_str_norm))
+        if len(label_str_norm[i]) > 0
+    ]
 
-    if len(filtered_preds) == 0:
-        # Avoid division by zero inside metrics; fall back to raw
-        bleu_norm_res = {"bleu": bleu_res.get("bleu", 0.0)}
-        sacrebleu_norm_res = {"score": sacrebleu_res.get("score", 0.0)}
-    else:
-        bleu_norm_res = bleu.compute(predictions=filtered_preds, references=filtered_refs)
-        sacrebleu_norm_res = sacrebleu.compute(predictions=filtered_preds, references=filtered_refs)
+    wer = 100 * wer.compute(predictions=pred_str_norm, references=label_str_norm)
+    cer = 100 * cer.compute(predictions=pred_str_norm, references=label_str_norm)
 
-    return {
-        "bleu": bleu_res.get("bleu"),
-        "sacrebleu": sacrebleu_res.get("score"),
-        "bleu_precisions": bleu_res.get("precisions"),  # keep extra diagnostic data
-        "bleu_norm": bleu_norm_res.get("bleu"),
-        "sacrebleu_norm": sacrebleu_norm_res.get("score"),
-    }
+    return {"wer_ortho": wer_ortho, "wer": wer, "cer_ortho": cer_ortho, "cer": cer}
 
 
 def get_hf_username() -> str:
@@ -95,10 +88,10 @@ def create_model_card(
     baseline_eval_results: Dict,
     ft_eval_results: Dict,
 ) -> ModelCard:
-    """Create a Model Card for a speech translation finetuned model using BLEU / SacreBLEU metrics."""
-
-    # Prefer SacreBLEU as primary leaderboard metric
-    sacrebleu_ft = round(ft_eval_results.get("eval_sacrebleu", 0.0), 3)
+    """
+    Create and upload a custom Model Card (https://huggingface.co/docs/hub/model-cards) to the Hugging Face repo
+    of the finetuned model that highlights the evaluation results before and after finetuning.
+    """
     card_metadata = ModelCardData(
         model_name=f"Finetuned {model_id} on {language}",
         base_model=model_id,
@@ -108,19 +101,15 @@ def create_model_card(
         library_name="transformers",
         eval_results=[
             EvalResult(
-                task_type="translation",
-                task_name="Speech Translation",
+                task_type="automatic-speech-recognition",
+                task_name="Speech-to-Text",
                 dataset_type="common_voice",
                 dataset_name=f"Common Voice ({language})",
-                metric_type="sacrebleu",
-                metric_value=sacrebleu_ft,
+                metric_type="wer",
+                metric_value=round(ft_eval_results["eval_wer"], 3),
             )
         ],
     )
-
-    def fmt(res: Dict, key: str) -> str:
-        return f"{res.get(key):.3f}" if key in res else "n/a"
-
     content = f"""
 ---
 {card_metadata.to_yaml()}
@@ -134,18 +123,18 @@ This model was created from the Mozilla.ai Blueprint:
 ## Evaluation results on {n_eval_samples} audio samples of {language}:
 
 ### Baseline model (before finetuning) on {language}
-- SacreBLEU: {fmt(baseline_eval_results, 'eval_sacrebleu')}
-- SacreBLEU (Normalized): {fmt(baseline_eval_results, 'eval_sacrebleu_norm')}
-- BLEU: {fmt(baseline_eval_results, 'eval_bleu')}
-- BLEU (Normalized): {fmt(baseline_eval_results, 'eval_bleu_norm')}
-- Loss: {fmt(baseline_eval_results, 'eval_loss')}
+- Word Error Rate (Normalized): {round(baseline_eval_results["eval_wer"], 3)}
+- Word Error Rate (Orthographic): {round(baseline_eval_results["eval_wer_ortho"], 3)}
+- Character Error Rate (Normalized): {round(baseline_eval_results["eval_cer"], 3)}
+- Character Error Rate (Orthographic): {round(baseline_eval_results["eval_cer_ortho"], 3)}
+- Loss: {round(baseline_eval_results["eval_loss"], 3)}
 
 ### Finetuned model (after finetuning) on {language}
-- SacreBLEU: {fmt(ft_eval_results, 'eval_sacrebleu')}
-- SacreBLEU (Normalized): {fmt(ft_eval_results, 'eval_sacrebleu_norm')}
-- BLEU: {fmt(ft_eval_results, 'eval_bleu')}
-- BLEU (Normalized): {fmt(ft_eval_results, 'eval_bleu_norm')}
-- Loss: {fmt(ft_eval_results, 'eval_loss')}
+- Word Error Rate (Normalized): {round(ft_eval_results["eval_wer"], 3)}
+- Word Error Rate (Orthographic): {round(ft_eval_results["eval_wer_ortho"], 3)}
+- Character Error Rate (Normalized): {round(ft_eval_results["eval_cer"], 3)}
+- Character Error Rate (Orthographic): {round(ft_eval_results["eval_cer_ortho"], 3)}
+- Loss: {round(ft_eval_results["eval_loss"], 3)}
 """
 
     return ModelCard(content)
@@ -156,20 +145,16 @@ def update_hf_model_card_with_fleurs_results(
     language: str,
     ft_eval_results: Dict,
 ) -> None:
-    """Append FLEURS evaluation (speech translation) BLEU / SacreBLEU scores to the Model Card."""
+    """
+    Update the HF Model Card with the evaluation results from the FLEURS dataset.
+    """
     model_card = ModelCard.load(model_repo_id)
-    sacrebleu_val = ft_eval_results.get("eval_sacrebleu")
-    sacrebleu_norm_val = ft_eval_results.get("eval_sacrebleu_norm")
-    bleu_val = ft_eval_results.get("eval_bleu")
-    bleu_norm_val = ft_eval_results.get("eval_bleu_norm")
-    loss_val = ft_eval_results.get("eval_loss")
-    n_samples = ft_eval_results.get("n_eval_samples", "n/a")
     model_card.content += f"""
-### Finetuned model (after finetuning) on the {language} FLEURS test set (total of {n_samples} samples)
-- SacreBLEU: {sacrebleu_val:.3f if sacrebleu_val is not None else 'n/a'}
-- SacreBLEU (Normalized): {sacrebleu_norm_val:.3f if sacrebleu_norm_val is not None else 'n/a'}
-- BLEU: {bleu_val:.3f if bleu_val is not None else 'n/a'}
-- BLEU (Normalized): {bleu_norm_val:.3f if bleu_norm_val is not None else 'n/a'}
-- Loss: {loss_val:.3f if loss_val is not None else 'n/a'}
+### Finetuned model (after finetuning) on the {language} FLEURS test set (total of {ft_eval_results["n_eval_samples"]} samples)
+- Word Error Rate (Normalized): {round(ft_eval_results["eval_wer"], 3)}
+- Word Error Rate (Orthographic): {round(ft_eval_results["eval_wer_ortho"], 3)}
+- Character Error Rate (Normalized): {round(ft_eval_results["eval_cer"], 3)}
+- Character Error Rate (Orthographic): {round(ft_eval_results["eval_cer_ortho"], 3)}
+- Loss: {round(ft_eval_results["eval_loss"], 3)}
 """
     model_card.push_to_hub(model_repo_id)

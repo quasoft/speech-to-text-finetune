@@ -18,7 +18,7 @@ from speech_to_text_finetune.data_process import (
     load_and_proc_hf_fleurs,
 )
 from speech_to_text_finetune.utils import (
-    compute_bleu_metrics,
+    compute_wer_cer_metrics,
     update_hf_model_card_with_fleurs_results,
 )
 
@@ -38,14 +38,14 @@ def evaluate_fleurs(
         fp16 = False
 
     processor = WhisperProcessor.from_pretrained(
-        model_id, language=language, task="translate"
+        model_id, language=language, task="transcribe"
     )
     model = WhisperForConditionalGeneration.from_pretrained(model_id)
     # set language and task for generation during inference and re-enable cache
     model.generate = partial(
         model.generate,
         language=language.lower(),
-        task="translate",
+        task="transcribe",
         use_cache=True,
     )
 
@@ -57,8 +57,8 @@ def evaluate_fleurs(
         eval_batch_size=eval_batch_size,
     )
 
-    bleu = evaluate.load("bleu")
-    sacrebleu = evaluate.load("sacrebleu")
+    wer = evaluate.load("wer")
+    cer = evaluate.load("cer")
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
@@ -72,10 +72,10 @@ def evaluate_fleurs(
         eval_dataset=dataset,
         data_collator=data_collator,
         compute_metrics=partial(
-            compute_bleu_metrics,
+            compute_wer_cer_metrics,
             processor=processor,
-            bleu=bleu,
-            sacrebleu=sacrebleu,
+            wer=wer,
+            cer=cer,
             normalizer=BasicTextNormalizer(),
         ),
         processing_class=processor.feature_extractor,
