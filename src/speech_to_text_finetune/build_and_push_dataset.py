@@ -237,15 +237,49 @@ def main(argv: List[str] | None = None) -> None:
             return len(y) / float(sr)
         return None
 
-    # Scan for long files and drop unless --keep-long
+    # Scan for unreadable / zero-length / long files.
+    unreadable: List[str] = []
+    zero_length: List[str] = []
     long_files: List[tuple[str, float]] = []
     for split in ["train", "test"]:
         if split not in ds:
             continue
         for path in ds[split]["audio"]:
-            dur = _duration_seconds(path)
-            if dur is not None and isfinite(dur) and dur > args.max_seconds:
+            try:
+                dur = _duration_seconds(path)
+            except Exception:
+                unreadable.append(path)
+                continue
+            if dur is None or not isfinite(dur) or dur <= 0:
+                zero_length.append(path)
+                continue
+            if dur > args.max_seconds:
                 long_files.append((path, dur))
+
+    # Always drop unreadable and zero-length before pushing / further filtering
+    drop_set = set(unreadable) | set(zero_length)
+    if drop_set:
+        for split in ["train", "test"]:
+            if split not in ds:
+                continue
+            before = ds[split].num_rows
+            if before == 0:
+                continue
+            ds[split] = ds[split].filter(lambda ex: ex["audio"] not in drop_set)
+            after = ds[split].num_rows
+            removed = before - after
+            if removed:
+                logger.warning(f"Dropped {removed} unreadable/zero-length audio file(s) from {split}.")
+        if unreadable:
+            logger.warning(
+                f"Total unreadable audio files removed: {len(unreadable)} (first 5: {unreadable[:5]})"
+            )
+        if zero_length:
+            logger.warning(
+                f"Total zero-length audio files removed: {len(zero_length)} (first 5: {zero_length[:5]})"
+            )
+
+    # Long files: warn and optionally drop (existing behavior)
     if long_files:
         long_files.sort(key=lambda x: x[1], reverse=True)
         action_msg = "(kept due to --keep-long)" if args.keep_long else "(will be DROPPED)"
