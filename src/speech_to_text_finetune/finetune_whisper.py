@@ -77,6 +77,11 @@ def run_finetuning(
     )
     model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
 
+    #processor = WhisperProcessor.from_pretrained(cfg.model_id, language=cfg.language, task="transcribe")
+    #model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
+    # Force decider IDs again
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=cfg.language, task="transcribe")
+
     # disable cache during training since it's incompatible with gradient checkpointing
     model.config.use_cache = False
     # set language and task for generation during inference and re-enable cache
