@@ -70,16 +70,19 @@ def run_finetuning(
     logger.info(
         f"Loading {cfg.model_id} on {device} and configuring it for {cfg.language}."
     )
+    # Use 'transcribe' (not 'translate') so the model is prompted to output the original language text.
+    # High WER you observed ( >100 ) is typical when 'translate' is used while references are in the source language.
     processor = WhisperProcessor.from_pretrained(
-        cfg.model_id, language=cfg.language, task="translate"
+        cfg.model_id, language=cfg.language, task="transcribe"
     )
     model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
 
     # disable cache during training since it's incompatible with gradient checkpointing
     model.config.use_cache = False
     # set language and task for generation during inference and re-enable cache
+    # Ensure generation also uses transcribe task
     model.generate = partial(
-        model.generate, language=cfg.language.lower(), task="translate", use_cache=True
+        model.generate, language=cfg.language.lower(), task="transcribe", use_cache=True
     )
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
