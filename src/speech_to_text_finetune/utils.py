@@ -102,9 +102,15 @@ def compute_bleu_chrf_metrics(
         label_proc = [normalizer(s) for s in label_str]
     else:
         pred_proc, label_proc = pred_str, label_str
-    bleu_score = 100 * bleu.compute(predictions=pred_proc, references=label_proc)["bleu"]
-    chrf_score = 100 * chrf.compute(predictions=pred_proc, references=label_proc)["score"]
-    return {"bleu": bleu_score, "chrf": chrf_score}
+    bleu_raw = bleu.compute(predictions=pred_proc, references=label_proc)["bleu"]
+    # Evaluate BLEU typically returns 0..1; scale to 0..100. If already 0..100, leave as is.
+    bleu_score = bleu_raw * 100 if bleu_raw <= 1.0 else bleu_raw
+
+    chrf_raw = chrf.compute(predictions=pred_proc, references=label_proc)["score"]
+    # sacrebleu's chrF returns 0..100; some wrappers may emit 0..1. Normalize robustly to 0..100.
+    chrf_score = chrf_raw * 100 if chrf_raw <= 1.0 else chrf_raw
+
+    return {"bleu": float(bleu_score), "chrf": float(chrf_score)}
 
 
 def get_hf_username() -> str:
@@ -181,6 +187,7 @@ This model was created from the Mozilla.ai Blueprint:
 - Loss: {round(baseline_eval_results["eval_loss"], 3)}
 
 ### Finetuned model (after finetuning) on {language}
+
 {"- BLEU: " + str(round(ft_eval_results.get('eval_bleu', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Normalized): {round(ft_eval_results['eval_wer'], 3)}"}
 {"- chrF: " + str(round(ft_eval_results.get('eval_chrf', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Orthographic): {round(ft_eval_results['eval_wer_ortho'], 3)}"}
 {'' if task=='translate' else f"- Character Error Rate (Normalized): {round(ft_eval_results['eval_cer'], 3)}"}
