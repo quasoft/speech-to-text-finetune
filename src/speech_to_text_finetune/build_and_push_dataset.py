@@ -47,7 +47,7 @@ import random
 import sys
 
 from loguru import logger
-from datasets import Dataset, DatasetDict, Features, Value
+from datasets import Dataset, DatasetDict, Features, Value, Audio
 from math import isfinite
 import librosa  # type: ignore
 
@@ -207,6 +207,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--include-missing-train", action="store_true", help="Include entries without 'train' flag (default skip)")
     p.add_argument("--dry-run", action="store_true", help="Build locally but skip push")
     p.add_argument("--max-seconds", type=float, default=29.0, help="Warn if any audio file exceeds this duration (seconds)")
+    p.add_argument("--raw-paths", action="store_true", help="Do NOT cast the audio column to an Audio feature (default casts, uploading audio data to Hub)")
     return p.parse_args(argv)
 
 
@@ -272,6 +273,11 @@ def main(argv: List[str] | None = None) -> None:
     token = args.token or os.getenv("HUGGINGFACE_HUB_TOKEN")
     if not token:
         logger.warning("No token provided; relying on cached auth (huggingface-cli login).")
+
+    # Cast to Audio feature (stores and uploads audio) unless user opts out
+    if not args.raw_paths:
+        logger.info("Casting 'audio' column(s) to Audio feature before push (use --raw-paths to skip).")
+        ds = ds.cast_column("audio", Audio())
 
     push_dataset(
         ds=ds,
