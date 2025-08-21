@@ -48,6 +48,8 @@ import sys
 
 from loguru import logger
 from datasets import Dataset, DatasetDict, Features, Value
+from math import isfinite
+import librosa  # type: ignore
 
 
 @dataclass
@@ -204,6 +206,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--create-pr", action="store_true", help="Create a PR instead of direct push (if repo exists)")
     p.add_argument("--include-missing-train", action="store_true", help="Include entries without 'train' flag (default skip)")
     p.add_argument("--dry-run", action="store_true", help="Build locally but skip push")
+    p.add_argument("--max-seconds", type=float, default=29.0, help="Warn if any audio file exceeds this duration (seconds)")
     return p.parse_args(argv)
 
 
@@ -220,6 +223,36 @@ def main(argv: List[str] | None = None) -> None:
         audio_exts=[ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in args.audio_exts],
         include_missing_train=args.include_missing_train,
     )
+
+    def _duration_seconds(path: str) -> float | None:
+        """Duration in seconds using librosa (exceptions are not caught)."""
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            y, sr = librosa.load(path, sr=None, mono=True)
+        if sr and len(y) > 0:
+            return len(y) / float(sr)
+        return None
+
+    # Scan for long files
+    long_files: List[tuple[str, float]] = []
+    for split in ["train", "test"]:
+        if split not in ds:
+            continue
+        for path in ds[split]["audio"]:
+            dur = _duration_seconds(path)
+            if dur is not None and isfinite(dur) and dur > args.max_seconds:
+                long_files.append((path, dur))
+    if long_files:
+        long_files.sort(key=lambda x: x[1], reverse=True)
+        logger.warning(
+            f"Detected {len(long_files)} audio file(s) longer than {args.max_seconds:.1f}s. Long files will later be filtered (30s cutoff)."
+        )
+        preview = long_files[:10]
+        for lf, dur in preview:
+            logger.warning(f"Long audio: {dur:.2f}s -> {lf}")
+        if len(long_files) > len(preview):
+            logger.warning(f"... {len(long_files) - len(preview)} more long files omitted from preview.")
 
     # If some rows lack a language and a global language is provided, fill.
     if args.language:
