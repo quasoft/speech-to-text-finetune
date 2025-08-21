@@ -392,6 +392,7 @@ def _process_inputs_and_labels_for_whisper(
         audio=[audio["array"] for audio in batched_audio],
         sampling_rate=processor.feature_extractor.sampling_rate,
         text=batch["sentence"],
+        return_attention_mask=True,  # ensure downstream model receives explicit attention mask
     )
 
     batch["input_length"] = [
@@ -419,7 +420,7 @@ class DataCollatorSpeechSeq2SeqWithPadding:
             {"input_features": feature["input_features"]} for feature in features
         ]
         batch = self.processor.feature_extractor.pad(
-            input_features, return_tensors="pt"
+            input_features, return_tensors="pt", return_attention_mask=True
         )
 
         # get the tokenized label sequences
