@@ -12,6 +12,7 @@ dependencies = [
   "accelerate",
   "datasets[audio]<4",
   "evaluate",
+  "sacrebleu>=2.4,<3",
   "gradio",
   "jiwer",
   "loguru",
