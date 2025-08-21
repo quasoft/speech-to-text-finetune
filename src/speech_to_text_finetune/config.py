@@ -60,6 +60,8 @@ class Config(BaseModel):
     freeze_encoder: bool = False  # if True, freeze entire encoder at start
     freeze_encoder_until_step: int = 0  # unfreeze after this global step (ignored if 0 or freeze_encoder False)
     freeze_encoder_keep_frozen: bool = False  # if True and freeze_encoder, never unfreeze (overrides until_step)
+    # Control resume behavior
+    resume: bool = True  # when False, start fresh: skip resume-from-checkpoint and allow overwriting output_dir
     training_hp: TrainingConfig
 
 

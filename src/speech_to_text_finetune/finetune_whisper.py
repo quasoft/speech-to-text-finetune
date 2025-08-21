@@ -1,4 +1,5 @@
 import json
+import os
 from functools import partial
 
 from transformers import (
@@ -8,6 +9,8 @@ from transformers import (
     Seq2SeqTrainingArguments,
     TrainerCallback,
 )
+from transformers.trainer_utils import get_last_checkpoint
+from huggingface_hub import snapshot_download
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 from transformers.models.whisper.tokenization_whisper import TO_LANGUAGE_CODE
 import torch
@@ -103,6 +106,29 @@ def run_finetuning(
         **cfg.training_hp.model_dump(),
     )
 
+    # If running in a fresh ephemeral environment (e.g., new Colab session) and pushing to hub, try to
+    # reconstruct the local checkpoint directory from the remote repo so we can resume seamlessly.
+    if (
+        cfg.resume
+        and cfg.training_hp.push_to_hub
+        and hf_repo_name
+        and not os.path.isdir(local_output_dir)
+    ):
+        try:
+            logger.info(
+                f"Local output dir '{local_output_dir}' not found. Attempting to download existing checkpoints from {hf_repo_name}."
+            )
+            snapshot_download(
+                repo_id=hf_repo_name,
+                local_dir=local_output_dir,
+                local_dir_use_symlinks=False,
+            )
+            logger.info("Download complete. Local directory ready for resume.")
+        except Exception as e:
+            logger.warning(
+                f"Could not download existing repo snapshot for resume (will start fresh if no local checkpoints): {e}"
+            )
+
     if proc_dataset := try_find_processed_version(
         dataset_id=cfg.dataset_id, language_id=language_id
     ):
@@ -191,19 +217,47 @@ def run_finetuning(
 
     processor.save_pretrained(training_args.output_dir)
 
-    logger.info(
-        f"Before finetuning, run evaluation on the baseline model {cfg.model_id} to easily compare performance"
-        f" before and after finetuning"
-    )
-    baseline_eval_results = trainer.evaluate()
-    logger.info(f"Baseline evaluation complete. Results:\n\t {baseline_eval_results}")
+    # Resume / baseline logic
+    last_checkpoint = get_last_checkpoint(training_args.output_dir) if cfg.resume else None
+    baseline_metrics_path = f"{training_args.output_dir}/baseline_eval_results.json"
+    if last_checkpoint:
+        logger.info(f"Found existing checkpoint at {last_checkpoint}. Will resume training from this point.")
+        # Try load previously stored baseline metrics if available
+        if os.path.isfile(baseline_metrics_path):
+            try:
+                with open(baseline_metrics_path, "r", encoding="utf-8") as f:
+                    baseline_eval_results = json.load(f)
+                logger.info("Loaded stored baseline evaluation metrics.")
+            except Exception as e:
+                logger.warning(f"Could not load stored baseline metrics: {e}. Using empty placeholder.")
+                baseline_eval_results = {}
+        else:
+            logger.warning("No stored baseline metrics file found; model card will omit baseline stats.")
+            baseline_eval_results = {}
+    else:
+        logger.info(
+            f"Before finetuning, run evaluation on the baseline model {cfg.model_id} to easily compare performance"
+            f" before and after finetuning"
+        )
+        baseline_eval_results = trainer.evaluate()
+        logger.info(f"Baseline evaluation complete. Results:\n\t {baseline_eval_results}")
+        # Persist baseline metrics for future resumed runs
+        try:
+            os.makedirs(training_args.output_dir, exist_ok=True)
+            with open(baseline_metrics_path, "w", encoding="utf-8") as f:
+                json.dump(baseline_eval_results, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to write baseline metrics file: {e}")
 
     logger.info(
         f"Start finetuning job on {dataset['train'].num_rows} audio samples. Monitor training metrics in real time in "
         f"a local tensorboard server by running in a new terminal: tensorboard --logdir {training_args.output_dir}/runs"
     )
     try:
-        trainer.train()
+        if cfg.resume and last_checkpoint:
+            trainer.train(resume_from_checkpoint=last_checkpoint)
+        else:
+            trainer.train()
     except KeyboardInterrupt:
         logger.info("Stopping the finetuning job prematurely...")
     else:
