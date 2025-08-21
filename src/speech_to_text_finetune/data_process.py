@@ -104,6 +104,18 @@ def load_dataset_from_dataset_id(
         pass
     except FileNotFoundError:
         pass
+    except ValueError as e:
+        # This typically occurs when a language-specific BuilderConfig (e.g. 'bg') is not
+        # present for the dataset. In that case we fall back to the generic HF loader which
+        # expects ready-made 'train'/'test' splits. Re-raise any other unexpected ValueErrors.
+        msg = str(e)
+        if "BuilderConfig" in msg and "not found" in msg:
+            logger.debug(
+                "Falling back to generic HF dataset loader because language-specific BuilderConfig was not found: "
+                f"{msg}"
+            )
+        else:
+            raise
 
     # Generic HF dataset loader (expects "train" and "test" splits with columns including "audio" and "sentence")
     try:
