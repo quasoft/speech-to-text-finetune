@@ -249,6 +249,5 @@ def main(argv: List[str] | None = None) -> None:
         create_pr=args.create_pr,
     )
 
-
-+if __name__ == "__main__":  # pragma: no cover
-+    main()
+if __name__ == "__main__":  # pragma: no cover
+    main()
