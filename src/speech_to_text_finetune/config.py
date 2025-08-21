@@ -51,10 +51,15 @@ class Config(BaseModel):
 
     model_id: str
     dataset_id: str
-    language: str
+    language: str  # For translation this is the TARGET language (what the model should output)
     repo_name: str
     n_train_samples: int
     n_test_samples: int
+    task: str = "transcribe"  # "transcribe" or "translate"
+    # Optional encoder freezing strategy (useful for low-resource speech translation)
+    freeze_encoder: bool = False  # if True, freeze entire encoder at start
+    freeze_encoder_until_step: int = 0  # unfreeze after this global step (ignored if 0 or freeze_encoder False)
+    freeze_encoder_keep_frozen: bool = False  # if True and freeze_encoder, never unfreeze (overrides until_step)
     training_hp: TrainingConfig
 
 

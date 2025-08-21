@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional
 
 from evaluate import EvaluationModule
 from huggingface_hub import (
@@ -74,6 +74,39 @@ def compute_wer_cer_metrics(
     return {"wer_ortho": wer_ortho, "wer": wer, "cer_ortho": cer_ortho, "cer": cer}
 
 
+def compute_bleu_chrf_metrics(
+    pred: EvalPrediction,
+    processor: WhisperProcessor,
+    bleu: EvaluationModule,
+    chrf: EvaluationModule,
+    normalizer: Optional[BasicTextNormalizer] = None,
+) -> Dict:
+    """Compute BLEU and chrF for speech translation tasks.
+
+    Args:
+        pred: EvalPrediction object
+        processor: Whisper processor
+        bleu: evaluate.load("bleu")
+        chrf: evaluate.load("chrf")
+        normalizer: optional normalizer
+    Returns:
+        Dict with bleu and chrf (percentage for consistency with WER output style)
+    """
+    pred_ids = pred.predictions
+    label_ids = pred.label_ids
+    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+    pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True)
+    label_str = processor.batch_decode(label_ids, skip_special_tokens=True)
+    if normalizer:
+        pred_proc = [normalizer(s) for s in pred_str]
+        label_proc = [normalizer(s) for s in label_str]
+    else:
+        pred_proc, label_proc = pred_str, label_str
+    bleu_score = 100 * bleu.compute(predictions=pred_proc, references=label_proc)["bleu"]
+    chrf_score = 100 * chrf.compute(predictions=pred_proc, references=label_proc)["score"]
+    return {"bleu": bleu_score, "chrf": chrf_score}
+
+
 def get_hf_username() -> str:
     return HfApi().whoami()["name"]
 
@@ -87,11 +120,29 @@ def create_model_card(
     n_eval_samples: int,
     baseline_eval_results: Dict,
     ft_eval_results: Dict,
+    task: str = "transcribe",
 ) -> ModelCard:
     """
     Create and upload a custom Model Card (https://huggingface.co/docs/hub/model-cards) to the Hugging Face repo
     of the finetuned model that highlights the evaluation results before and after finetuning.
     """
+    if task == "translate":
+        primary_metric_name = "bleu"
+        primary_metric_value = (
+            round(ft_eval_results.get("eval_bleu", 0.0), 3)
+            if ft_eval_results.get("eval_bleu") is not None
+            else 0.0
+        )
+        task_type = "speech-translation"
+        task_name = "Speech Translation"
+        metric_type = "bleu"
+    else:
+        primary_metric_name = "wer"
+        primary_metric_value = round(ft_eval_results.get("eval_wer", 0.0), 3)
+        task_type = "automatic-speech-recognition"
+        task_name = "Speech-to-Text"
+        metric_type = "wer"
+
     card_metadata = ModelCardData(
         model_name=f"Finetuned {model_id} on {language}",
         base_model=model_id,
@@ -101,12 +152,12 @@ def create_model_card(
         library_name="transformers",
         eval_results=[
             EvalResult(
-                task_type="automatic-speech-recognition",
-                task_name="Speech-to-Text",
+                task_type=task_type,
+                task_name=task_name,
                 dataset_type="common_voice",
                 dataset_name=f"Common Voice ({language})",
-                metric_type="wer",
-                metric_value=round(ft_eval_results["eval_wer"], 3),
+                metric_type=metric_type,
+                metric_value=primary_metric_value,
             )
         ],
     )
@@ -123,17 +174,17 @@ This model was created from the Mozilla.ai Blueprint:
 ## Evaluation results on {n_eval_samples} audio samples of {language}:
 
 ### Baseline model (before finetuning) on {language}
-- Word Error Rate (Normalized): {round(baseline_eval_results["eval_wer"], 3)}
-- Word Error Rate (Orthographic): {round(baseline_eval_results["eval_wer_ortho"], 3)}
-- Character Error Rate (Normalized): {round(baseline_eval_results["eval_cer"], 3)}
-- Character Error Rate (Orthographic): {round(baseline_eval_results["eval_cer_ortho"], 3)}
+{"- BLEU: " + str(round(baseline_eval_results.get('eval_bleu', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Normalized): {round(baseline_eval_results['eval_wer'], 3)}"}
+{"- chrF: " + str(round(baseline_eval_results.get('eval_chrf', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Orthographic): {round(baseline_eval_results['eval_wer_ortho'], 3)}"}
+{'' if task=='translate' else f"- Character Error Rate (Normalized): {round(baseline_eval_results['eval_cer'], 3)}"}
+{'' if task=='translate' else f"- Character Error Rate (Orthographic): {round(baseline_eval_results['eval_cer_ortho'], 3)}"}
 - Loss: {round(baseline_eval_results["eval_loss"], 3)}
 
 ### Finetuned model (after finetuning) on {language}
-- Word Error Rate (Normalized): {round(ft_eval_results["eval_wer"], 3)}
-- Word Error Rate (Orthographic): {round(ft_eval_results["eval_wer_ortho"], 3)}
-- Character Error Rate (Normalized): {round(ft_eval_results["eval_cer"], 3)}
-- Character Error Rate (Orthographic): {round(ft_eval_results["eval_cer_ortho"], 3)}
+{"- BLEU: " + str(round(ft_eval_results.get('eval_bleu', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Normalized): {round(ft_eval_results['eval_wer'], 3)}"}
+{"- chrF: " + str(round(ft_eval_results.get('eval_chrf', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Orthographic): {round(ft_eval_results['eval_wer_ortho'], 3)}"}
+{'' if task=='translate' else f"- Character Error Rate (Normalized): {round(ft_eval_results['eval_cer'], 3)}"}
+{'' if task=='translate' else f"- Character Error Rate (Orthographic): {round(ft_eval_results['eval_cer_ortho'], 3)}"}
 - Loss: {round(ft_eval_results["eval_loss"], 3)}
 """
 

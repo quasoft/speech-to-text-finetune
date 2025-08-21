@@ -6,6 +6,7 @@ from transformers import (
     WhisperProcessor,
     WhisperForConditionalGeneration,
     Seq2SeqTrainingArguments,
+    TrainerCallback,
 )
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 from transformers.models.whisper.tokenization_whisper import TO_LANGUAGE_CODE
@@ -26,6 +27,7 @@ from speech_to_text_finetune.utils import (
     get_hf_username,
     create_model_card,
     compute_wer_cer_metrics,
+    compute_bleu_chrf_metrics,
 )
 
 
@@ -68,26 +70,28 @@ def run_finetuning(
 
     device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
     logger.info(
-        f"Loading {cfg.model_id} on {device} and configuring it for {cfg.language}."
+        f"Loading {cfg.model_id} on {device} and configuring it for task={cfg.task} target_language={cfg.language}."
     )
-    # Use 'transcribe' (not 'translate') so the model is prompted to output the original language text.
-    # High WER you observed ( >100 ) is typical when 'translate' is used while references are in the source language.
     processor = WhisperProcessor.from_pretrained(
-        cfg.model_id, language=cfg.language, task="transcribe"
+        cfg.model_id, language=cfg.language, task=cfg.task
     )
     model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
-
-    #processor = WhisperProcessor.from_pretrained(cfg.model_id, language=cfg.language, task="transcribe")
-    #model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
-    # Force decider IDs again
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=cfg.language, task="transcribe")
-
+    # For non-English translation targets we optionally disable forced decoder ids (English bias)
+    if cfg.task == "translate":
+        # Let generation decide without English bias; user can re-enable by editing config
+        model.config.forced_decoder_ids = None
+    else:
+        model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(
+            language=cfg.language, task=cfg.task
+        )
     # disable cache during training since it's incompatible with gradient checkpointing
     model.config.use_cache = False
-    # set language and task for generation during inference and re-enable cache
-    # Ensure generation also uses transcribe task
+    # convenience partial for generation during eval/prediction
     model.generate = partial(
-        model.generate, language=cfg.language.lower(), task="transcribe", use_cache=True
+        model.generate,
+        language=cfg.language.lower(),
+        task=cfg.task,
+        use_cache=True,
     )
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
@@ -128,8 +132,51 @@ def run_finetuning(
             f"automatically use this processed version."
         )
 
-    wer = evaluate.load("wer")
-    cer = evaluate.load("cer")
+    if cfg.task == "translate":
+        bleu = evaluate.load("bleu")
+        chrf = evaluate.load("chrf")
+        compute_metrics_fn = partial(
+            compute_bleu_chrf_metrics,
+            processor=processor,
+            bleu=bleu,
+            chrf=chrf,
+            normalizer=None,
+        )
+    else:
+        wer = evaluate.load("wer")
+        cer = evaluate.load("cer")
+        compute_metrics_fn = partial(
+            compute_wer_cer_metrics,
+            processor=processor,
+            wer=wer,
+            cer=cer,
+            normalizer=BasicTextNormalizer(),
+        )
+
+    # Optional: freeze encoder early to adapt decoder first
+    if cfg.freeze_encoder:
+        for p in model.model.encoder.parameters():
+            p.requires_grad = False
+        logger.info("Encoder frozen at start of training.")
+
+    class EncoderUnfreezeCallback(TrainerCallback):
+        def __init__(self, unfreeze_step: int):
+            self.unfreeze_step = unfreeze_step
+            self.unfroze = False
+
+        def on_step_begin(self, args, state, control, **kwargs):  # type: ignore
+            if not self.unfroze and state.global_step >= self.unfreeze_step:
+                for p in model.model.encoder.parameters():
+                    p.requires_grad = True
+                self.unfroze = True
+                logger.info(
+                    f"[EncoderUnfreezeCallback] Encoder unfrozen automatically at step {state.global_step}."
+                )
+            return control
+
+    callbacks = []
+    if cfg.freeze_encoder and not cfg.freeze_encoder_keep_frozen and cfg.freeze_encoder_until_step > 0:
+        callbacks.append(EncoderUnfreezeCallback(cfg.freeze_encoder_until_step))
 
     trainer = Seq2SeqTrainer(
         args=training_args,
@@ -137,14 +184,9 @@ def run_finetuning(
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         data_collator=data_collator,
-        compute_metrics=partial(
-            compute_wer_cer_metrics,
-            processor=processor,
-            wer=wer,
-            cer=cer,
-            normalizer=BasicTextNormalizer(),
-        ),
+        compute_metrics=compute_metrics_fn,
         processing_class=processor.feature_extractor,
+        callbacks=callbacks or None,
     )
 
     processor.save_pretrained(training_args.output_dir)
@@ -179,6 +221,7 @@ def run_finetuning(
         n_eval_samples=dataset["test"].num_rows,
         baseline_eval_results=baseline_eval_results,
         ft_eval_results=eval_results,
+        task=cfg.task,
     )
     model_card.save(f"{local_output_dir}/README.md")
 
