@@ -105,6 +105,16 @@ def load_dataset_from_dataset_id(
     except FileNotFoundError:
         pass
 
+    # Generic HF dataset loader (expects "train" and "test" splits with columns including "audio" and "sentence")
+    try:
+        dataset = _load_generic_hf_audio_text_dataset(dataset_id)
+        # Use provided language_id if any, else a generic tag to namespace cache directory
+        return dataset, _get_hf_proc_dataset_path(dataset_id, language_id or "generic")
+    except HFValidationError:
+        pass
+    except FileNotFoundError:
+        pass
+
     raise ValueError(
         f"Could not find dataset {dataset_id}, neither locally nor at HuggingFace. "
         f"If its a private repo, make sure you are logged in locally."
@@ -138,6 +148,45 @@ def _load_hf_common_voice(dataset_id: str, language_id: str) -> DatasetDict:
     common_voice = common_voice.select_columns(["audio", "sentence"])
 
     return common_voice
+
+
+def _load_generic_hf_audio_text_dataset(dataset_id: str) -> DatasetDict:
+    """Load a generic Hugging Face dataset repo that already contains (at least) 'train' and 'test' splits
+    with 'audio' and 'sentence' columns.
+
+    This allows users to prepare & push their own multi-domain dataset (e.g. merged domains with a 'domain' column)
+    and still reuse the existing processing / finetuning pipeline without mimicking the Common Voice structure.
+
+    Expectations:
+        - load_dataset(dataset_id) returns a DatasetDict with 'train' and 'test'.
+        - Each split has at minimum columns: 'audio' (either a path string or an Audio feature) and 'sentence'.
+        - Any extra metadata columns (e.g. 'domain') are preserved until processing (they will be removed later when
+          process_dataset selects required columns, unless user customizes it).
+
+    Raises:
+        FileNotFoundError: if structure / columns are not present (so calling code can try other loaders)
+        HFValidationError: if dataset_id is invalid on the Hub.
+    """
+    ds = load_dataset(dataset_id, trust_remote_code=True)
+
+    # Ensure required splits
+    if not isinstance(ds, DatasetDict) or not {"train", "test"}.issubset(ds.keys()):
+        raise FileNotFoundError(
+            "Generic HF dataset loader expects 'train' and 'test' splits."
+        )
+
+    # Check required columns
+    required_cols = {"audio", "sentence"}
+    for split in ["train", "test"]:
+        cols = set(ds[split].column_names)
+        if not required_cols.issubset(cols):
+            raise FileNotFoundError(
+                f"Split '{split}' missing required columns {required_cols - cols}."
+            )
+
+    # Optionally narrow columns to at least what downstream expects; keep others for potential later analysis.
+    # Do not call select_columns here to avoid dropping user metadata prematurely; processing later will prune.
+    return ds
 
 
 def _load_local_common_voice(cv_data_dir: str) -> DatasetDict:
