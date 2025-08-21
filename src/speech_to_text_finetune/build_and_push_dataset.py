@@ -107,6 +107,7 @@ def build_datasetdict(
     seed: int,
     audio_exts: List[str],
     include_missing_train: bool,
+    global_language: str,
 ) -> DatasetDict:
     root = projects_json.parent
     logger.info(f"Reading project specs from {projects_json}")
@@ -135,8 +136,8 @@ def build_datasetdict(
         domain_rows = list(iter_audio_transcript_pairs(domain_dir, exts=audio_exts))
         for r in domain_rows:
             r["domain"] = spec.title
-            if spec.language:
-                r["language"] = spec.language
+            # Always override language with global language argument
+            r["language"] = global_language
         rows.extend(domain_rows)
         total_audio += len(domain_rows)
         logger.info(f"Collected {len(domain_rows)} samples from {spec.title}")
@@ -157,9 +158,8 @@ def build_datasetdict(
         "audio": Value("string"),
         "sentence": Value("string"),
         "domain": Value("string"),
+        "language": Value("string"),
     }
-    if any("language" in r for r in rows):
-        base_features["language"] = Value("string")
 
     # We keep audio as path (string). Processing pipeline will cast to Audio later.
     train_ds = Dataset.from_list(train_rows, features=Features(base_features))
@@ -191,7 +191,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build and push merged multi-domain audio dataset.")
     p.add_argument("--projects-json", required=True, type=Path, help="Path to projects.json descriptor")
     p.add_argument("--repo-id", required=True, help="Target Hub dataset repo id (e.g. user/my-dataset)")
-    p.add_argument("--language", required=False, help="Primary language code (added if missing in entries)")
+    p.add_argument("--language", required=True, help="Global language code to assign to every sample (per-project language fields are ignored)")
     p.add_argument("--train-split", type=float, default=0.9, help="Fraction of data for train split")
     p.add_argument("--seed", type=int, default=42, help="Random seed for shuffling")
     p.add_argument(
@@ -207,6 +207,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--include-missing-train", action="store_true", help="Include entries without 'train' flag (default skip)")
     p.add_argument("--dry-run", action="store_true", help="Build locally but skip push")
     p.add_argument("--max-seconds", type=float, default=29.0, help="Warn if any audio file exceeds this duration (seconds)")
+    p.add_argument("--keep-long", action="store_true", help="Do NOT drop long files; only warn (default behavior now drops them)")
     p.add_argument("--raw-paths", action="store_true", help="Do NOT cast the audio column to an Audio feature (default casts, uploading audio data to Hub)")
     return p.parse_args(argv)
 
@@ -223,6 +224,7 @@ def main(argv: List[str] | None = None) -> None:
         seed=args.seed,
         audio_exts=[ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in args.audio_exts],
         include_missing_train=args.include_missing_train,
+        global_language=args.language,
     )
 
     def _duration_seconds(path: str) -> float | None:
@@ -235,7 +237,7 @@ def main(argv: List[str] | None = None) -> None:
             return len(y) / float(sr)
         return None
 
-    # Scan for long files
+    # Scan for long files and drop unless --keep-long
     long_files: List[tuple[str, float]] = []
     for split in ["train", "test"]:
         if split not in ds:
@@ -246,22 +248,29 @@ def main(argv: List[str] | None = None) -> None:
                 long_files.append((path, dur))
     if long_files:
         long_files.sort(key=lambda x: x[1], reverse=True)
+        action_msg = "(kept due to --keep-long)" if args.keep_long else "(will be DROPPED)"
         logger.warning(
-            f"Detected {len(long_files)} audio file(s) longer than {args.max_seconds:.1f}s. Long files will later be filtered (30s cutoff)."
+            f"Detected {len(long_files)} audio file(s) longer than {args.max_seconds:.1f}s {action_msg}."
         )
         preview = long_files[:10]
         for lf, dur in preview:
             logger.warning(f"Long audio: {dur:.2f}s -> {lf}")
         if len(long_files) > len(preview):
             logger.warning(f"... {len(long_files) - len(preview)} more long files omitted from preview.")
+        if not args.keep_long:
+            long_set = {p for p, _ in long_files}
+            for split in ["train", "test"]:
+                if split not in ds:
+                    continue
+                before = ds[split].num_rows
+                ds[split] = ds[split].filter(lambda ex: ex["audio"] not in long_set)
+                after = ds[split].num_rows
+                if before != after:
+                    logger.warning(
+                        f"Dropped {before - after} long sample(s) from {split} (now {after} rows)."
+                    )
 
-    # If some rows lack a language and a global language is provided, fill.
-    if args.language:
-        def add_lang(example):
-            if "language" not in example or not example["language"]:
-                example["language"] = args.language
-            return example
-        ds = ds.map(add_lang)
+    # All samples already have the global language; per-project language ignored.
 
     logger.info("Sample record from train split:")
     logger.info(ds["train"][0])
