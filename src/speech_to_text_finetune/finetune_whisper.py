@@ -8,6 +8,7 @@ from transformers import (
     WhisperForConditionalGeneration,
     Seq2SeqTrainingArguments,
     TrainerCallback,
+    GenerationConfig,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from huggingface_hub import snapshot_download
@@ -90,6 +91,32 @@ def run_finetuning(
         )
     # disable cache during training since it's incompatible with gradient checkpointing
     model.config.use_cache = False
+    # Create and attach a default GenerationConfig so downstream scripts can load it directly
+    # Values mirror our eval-time generation behavior and spot-test expectations
+    gen_max_new_tokens = (
+        getattr(cfg.training_hp, "generation_max_length", None) or 225
+    )
+    generation_config = GenerationConfig(
+        num_beams=5,
+        no_repeat_ngram_size=3,
+        length_penalty=1.1,
+        do_sample=False,
+        max_new_tokens=gen_max_new_tokens,
+    )
+    # Keep forced ids consistent with model.config logic above
+    if cfg.task == "translate":
+        generation_config.forced_decoder_ids = None
+    else:
+        generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(
+            language=cfg.language, task=cfg.task
+        )
+    # Provide Whisper language mapping so GenerationConfig.from_pretrained has it available
+    # (spot-test.py relies on this)
+    try:
+        generation_config.lang_to_id = processor.tokenizer.lang_code_to_id  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    model.generation_config = generation_config
     # convenience partial for generation during eval/prediction
     model.generate = partial(
         model.generate,
@@ -217,6 +244,11 @@ def run_finetuning(
     )
 
     processor.save_pretrained(training_args.output_dir)
+    # Persist generation config alongside the model so clients can load with GenerationConfig.from_pretrained
+    try:
+        generation_config.save_pretrained(training_args.output_dir)
+    except Exception as e:
+        logger.warning(f"Failed to save generation_config: {e}")
 
     # Resume / baseline logic
     last_checkpoint = get_last_checkpoint(training_args.output_dir) if cfg.resume else None

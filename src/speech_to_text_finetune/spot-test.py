@@ -1,5 +1,5 @@
 """
-Romani e Bulgarian spot-check aligned with finetune/eval settings.
+Romani to Bulgarian spot-check aligned with finetune/eval settings.
 
 Key changes vs previous version:
 - Do NOT force decoder prompt ids. Clear any saved forced_decoder_ids on both config and generation_config.
@@ -11,10 +11,10 @@ import random
 import torch
 from datasets import load_dataset, Audio
 from huggingface_hub import login
-from transformers import WhisperProcessor, WhisperForConditionalGeneration
+from transformers import WhisperProcessor, WhisperForConditionalGeneration, GenerationConfig
 
 # Model/checkpoint and data
-model_id = "quasoft2/whisper-small-rm"   # or a local checkpoint dir
+model_id = "quasoft2/whisper-large-v2-rm"   # or a local checkpoint dir
 dataset_id = "quasoft2/voxrom"
 
 # Use target language NAME (as in training config), not the code.
@@ -28,7 +28,12 @@ if hf_token:
     login(token=hf_token, add_to_git_credential=False)
 
 processor = WhisperProcessor.from_pretrained(model_id, token=hf_token)
-model = WhisperForConditionalGeneration.from_pretrained(model_id, token=hf_token).eval()
+
+# Explicitly load and update the generation config
+generation_config = GenerationConfig.from_pretrained(model_id)
+# Add the missing attribute based on the processor's language mappings
+generation_config.lang_to_id = processor.tokenizer.lang_code_to_id
+model = WhisperForConditionalGeneration.from_pretrained(model_id, generation_config=generation_config, token=hf_token).eval()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
@@ -37,6 +42,7 @@ model.to(device)
 if hasattr(model.config, "forced_decoder_ids"):
     model.config.forced_decoder_ids = None
 model.generation_config.forced_decoder_ids = None
+
 
 # Load dataset and enforce Whisper SR
 ds = load_dataset(dataset_id, **({"token": hf_token} if hf_token else {}))
