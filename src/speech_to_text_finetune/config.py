@@ -60,7 +60,13 @@ class Config(BaseModel):
     repo_name: str
     n_train_samples: int
     n_test_samples: int
-    task: str = "transcribe"  # "transcribe" or "translate"
+    task: str = "transcribe"  # training/eval task: "transcribe" or "translate"
+    # Decoding behavior during generate/evaluate:
+    # - None: follow `task` (backward compatible default)
+    # - "transcribe": bias decoding toward `language` output
+    # - "translate": bias decoding toward English output
+    # - "neutral": no prompt/bias; decoder decides language
+    decode_mode: str | None = None
     # Evaluation normalization options
     eval_lowercase: bool = False  # if True (translate task), compute BLEU/chrF case-insensitively
     # Optional encoder freezing strategy (useful for low-resource speech translation)

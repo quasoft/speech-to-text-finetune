@@ -81,49 +81,52 @@ def run_finetuning(
         cfg.model_id, language=cfg.language, task=cfg.task
     )
     model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
-    # For non-English translation targets we optionally disable forced decoder ids (English bias)
-    if cfg.task == "translate":
-        # Let generation decide without English bias; user can re-enable by editing config
-        model.config.forced_decoder_ids = None
-    else:
-        model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(
-            language=cfg.language, task=cfg.task
-        )
+    # Do not rely on forced_decoder_ids; prefer prompt_ids in GenerationConfig
+    model.config.forced_decoder_ids = None
     # disable cache during training since it's incompatible with gradient checkpointing
     model.config.use_cache = False
-    # Create and attach a default GenerationConfig so downstream scripts can load it directly
-    # Values mirror our eval-time generation behavior and spot-test expectations
-    gen_max_new_tokens = (
-        getattr(cfg.training_hp, "generation_max_length", None) or 225
-    )
-    generation_config = GenerationConfig(
-        num_beams=5,
-        no_repeat_ngram_size=3,
-        length_penalty=1.1,
-        do_sample=False,
-        max_new_tokens=gen_max_new_tokens,
-    )
-    # Keep forced ids consistent with model.config logic above
-    if cfg.task == "translate":
-        generation_config.forced_decoder_ids = None
+    # Build GenerationConfig from pretrained to inherit model-specific defaults (suppress_tokens, etc.)
+    gen_max_new_tokens = getattr(cfg.training_hp, "generation_max_length", None) or 225
+    generation_config = GenerationConfig.from_pretrained(cfg.model_id)
+    generation_config.num_beams = 5
+    generation_config.no_repeat_ngram_size = 3
+    generation_config.length_penalty = 1.1
+    generation_config.do_sample = False
+    generation_config.max_new_tokens = gen_max_new_tokens
+    # Keep forced ids off; prompt_ids is the preferred mechanism
+    generation_config.forced_decoder_ids = None
+
+    # Decide decode behavior. decode_mode overrides task when provided.
+    decode_mode = (cfg.decode_mode or cfg.task).lower()
+    # Normalize decode_mode to allowed values
+    if decode_mode not in {"transcribe", "translate", "neutral"}:
+        logger.warning(f"Unknown decode_mode '{decode_mode}', defaulting to '{cfg.task}'.")
+        decode_mode = cfg.task
+
+    # Assign task/language and prompt_ids according to decode choice
+    generation_config.language = cfg.language.lower()
+    if decode_mode == "neutral":
+        generation_config.task = None  # type: ignore[assignment]
+        # No prompt to keep decoder language-neutral
+        generation_config.prompt_ids = None  # type: ignore[attr-defined]
     else:
-        generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(
-            language=cfg.language, task=cfg.task
-        )
-    # Provide Whisper language mapping so GenerationConfig.from_pretrained has it available
-    # (spot-test.py relies on this)
+        # Use new API when available, fallback to decoder prompt ids
+        generation_config.task = decode_mode
+        try:
+            prompt_ids = getattr(processor, "get_prompt_ids")(language=cfg.language, task=decode_mode)
+        except AttributeError:
+            dec_prompt = processor.get_decoder_prompt_ids(language=cfg.language, task=decode_mode)
+            prompt_ids = [tid for _, tid in dec_prompt]
+        # For translate, Whisper tends to bias to English; keeping translate prompt will reinforce English.
+        # Users who want non-English targets should choose decode_mode="transcribe".
+        generation_config.prompt_ids = prompt_ids  # type: ignore[attr-defined]
+
+    # Provide Whisper language mapping so GenerationConfig consumers can access it
     try:
         generation_config.lang_to_id = processor.tokenizer.lang_code_to_id  # type: ignore[attr-defined]
     except Exception:
         pass
     model.generation_config = generation_config
-    # convenience partial for generation during eval/prediction
-    model.generate = partial(
-        model.generate,
-        language=cfg.language.lower(),
-        task=cfg.task,
-        use_cache=True,
-    )
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
