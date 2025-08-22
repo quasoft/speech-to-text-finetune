@@ -61,6 +61,8 @@ class Config(BaseModel):
     n_train_samples: int
     n_test_samples: int
     task: str = "transcribe"  # "transcribe" or "translate"
+    # Evaluation normalization options
+    eval_lowercase: bool = False  # if True (translate task), compute BLEU/chrF case-insensitively
     # Optional encoder freezing strategy (useful for low-resource speech translation)
     freeze_encoder: bool = False  # if True, freeze entire encoder at start
     freeze_encoder_until_step: int = 0  # unfreeze after this global step (ignored if 0 or freeze_encoder False)

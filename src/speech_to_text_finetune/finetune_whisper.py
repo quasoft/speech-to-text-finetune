@@ -31,6 +31,7 @@ from speech_to_text_finetune.utils import (
     create_model_card,
     compute_wer_cer_metrics,
     compute_bleu_chrf_metrics,
+    lowercase_normalizer,
 )
 
 
@@ -166,7 +167,7 @@ def run_finetuning(
             processor=processor,
             bleu=bleu,
             chrf=chrf,
-            normalizer=None,
+            normalizer=lowercase_normalizer if getattr(cfg, "eval_lowercase", False) else None,
         )
     else:
         wer = evaluate.load("wer")

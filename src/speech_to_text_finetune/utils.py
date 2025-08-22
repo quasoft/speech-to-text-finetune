@@ -1,4 +1,5 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
+import unicodedata
 
 from evaluate import EvaluationModule
 from huggingface_hub import (
@@ -79,7 +80,7 @@ def compute_bleu_chrf_metrics(
     processor: WhisperProcessor,
     bleu: EvaluationModule,
     chrf: EvaluationModule,
-    normalizer: Optional[BasicTextNormalizer] = None,
+    normalizer: Optional[Callable[[str], str]] = None,
 ) -> Dict:
     """Compute BLEU and chrF for speech translation tasks.
 
@@ -111,6 +112,21 @@ def compute_bleu_chrf_metrics(
     chrf_score = chrf_raw * 100 if chrf_raw <= 1.0 else chrf_raw
 
     return {"bleu": float(bleu_score), "chrf": float(chrf_score)}
+
+
+def lowercase_normalizer(text: str) -> str:
+    """Normalize text for multilingual translation metrics by lowercasing while
+    preserving punctuation and spacing. Uses NFKC to normalize Unicode forms,
+    then lowercases. Safe for Cyrillic (e.g., Bulgarian).
+
+    Args:
+        text: input string
+    Returns:
+        normalized string (case-folded, punctuation kept)
+    """
+    if text is None:
+        return ""
+    return unicodedata.normalize("NFKC", text).lower()
 
 
 def get_hf_username() -> str:
