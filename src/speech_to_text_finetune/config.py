@@ -24,6 +24,9 @@ class TrainingConfig(BaseModel):
     gradient_checkpointing: bool
     fp16: bool
     eval_strategy: str
+    # Optional frequency and reproducibility controls
+    eval_steps: int | None = None
+    seed: int | None = None
     per_device_eval_batch_size: int
     predict_with_generate: bool
     generation_max_length: int
@@ -31,6 +34,8 @@ class TrainingConfig(BaseModel):
     logging_steps: int
     load_best_model_at_end: bool
     save_total_limit: int
+    # File format for checkpoints
+    save_safetensors: bool = True
     metric_for_best_model: str
     greater_is_better: bool
 
