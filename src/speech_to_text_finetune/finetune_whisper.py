@@ -110,15 +110,13 @@ def run_finetuning(
         # No prompt to keep decoder language-neutral
         generation_config.prompt_ids = None  # type: ignore[attr-defined]
     else:
-        # Use new API when available, fallback to decoder prompt ids
         generation_config.task = decode_mode
-        try:
-            prompt_ids = getattr(processor, "get_prompt_ids")(language=cfg.language, task=decode_mode)
-        except AttributeError:
-            dec_prompt = processor.get_decoder_prompt_ids(language=cfg.language, task=decode_mode)
-            prompt_ids = [tid for _, tid in dec_prompt]
-        # For translate, Whisper tends to bias to English; keeping translate prompt will reinforce English.
-        # Users who want non-English targets should choose decode_mode="transcribe".
+        # Stable API: returns (position, token_id) pairs
+        dec_prompt = processor.get_decoder_prompt_ids(
+            task=decode_mode, language=cfg.language, no_timestamps=True
+        )
+        prompt_ids = [tid for _, tid in dec_prompt] if dec_prompt is not None else None
+        # For translate, Whisper biases toward English; choose decode_mode="transcribe" for non-English targets.
         generation_config.prompt_ids = prompt_ids  # type: ignore[attr-defined]
 
     # Provide Whisper language mapping so GenerationConfig consumers can access it
