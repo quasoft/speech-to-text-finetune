@@ -27,6 +27,7 @@ from speech_to_text_finetune.data_process import (
     try_find_processed_version,
     process_dataset,
     load_subset_of_dataset,
+    upsample_films_and_interviews,
 )
 from speech_to_text_finetune.utils import (
     get_hf_username,
@@ -168,6 +169,17 @@ def run_finetuning(
         dataset = proc_dataset
         dataset["train"] = load_subset_of_dataset(dataset["train"], cfg.n_train_samples)
         dataset["test"] = load_subset_of_dataset(dataset["test"], cfg.n_test_samples)
+        # Optional domain upsampling (only affects train, requires a 'domain' column)
+        if getattr(cfg, "upsample_domains", False) and getattr(cfg, "upsample_domains_factor", 1) > 1:
+            try:
+                dataset["train"] = upsample_films_and_interviews(
+                    dataset["train"], factor=int(cfg.upsample_domains_factor)
+                )
+                logger.info(
+                    f"Applied domain upsampling (factor={cfg.upsample_domains_factor}) to train split."
+                )
+            except Exception as e:
+                logger.warning(f"Could not upsample domains: {e}")
     else:
         logger.info(f"Loading {cfg.dataset_id}. Language selected {cfg.language}")
         dataset, save_proc_dataset_dir = load_dataset_from_dataset_id(
@@ -176,6 +188,17 @@ def run_finetuning(
         )
         dataset["train"] = load_subset_of_dataset(dataset["train"], cfg.n_train_samples)
         dataset["test"] = load_subset_of_dataset(dataset["test"], cfg.n_test_samples)
+        # Optional domain upsampling (only affects train, requires a 'domain' column)
+        if getattr(cfg, "upsample_domains", False) and getattr(cfg, "upsample_domains_factor", 1) > 1:
+            try:
+                dataset["train"] = upsample_films_and_interviews(
+                    dataset["train"], factor=int(cfg.upsample_domains_factor)
+                )
+                logger.info(
+                    f"Applied domain upsampling (factor={cfg.upsample_domains_factor}) to train split."
+                )
+            except Exception as e:
+                logger.warning(f"Could not upsample domains: {e}")
         logger.info("Processing dataset...")
         dataset = process_dataset(
             dataset=dataset,

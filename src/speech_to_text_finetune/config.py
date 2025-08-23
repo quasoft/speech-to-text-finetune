@@ -77,6 +77,9 @@ class Config(BaseModel):
     # Control resume behavior
     resume: bool = True  # when False, start fresh: skip resume-from-checkpoint and allow overwriting output_dir
     training_hp: TrainingConfig
+    # Optional domain upsampling
+    upsample_domains: bool = False
+    upsample_domains_factor: int = 3
 
 
 PROC_DATASET_DIR = "processed_version"
