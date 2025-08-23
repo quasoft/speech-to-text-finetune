@@ -13,6 +13,7 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from huggingface_hub import snapshot_download
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
+from speech_to_text_finetune.normalizer import BasicTextNormalizer as LocalBasicTextNormalizer
 from transformers.models.whisper.tokenization_whisper import TO_LANGUAGE_CODE
 import torch
 from typing import Dict, Tuple
@@ -187,7 +188,7 @@ def run_finetuning(
             f"automatically use this processed version."
         )
 
-    if cfg.task == "translate":
+    if cfg.metric == "bleu":
         bleu = evaluate.load("bleu")
         chrf = evaluate.load("chrf")
         compute_metrics_fn = partial(
@@ -195,7 +196,9 @@ def run_finetuning(
             processor=processor,
             bleu=bleu,
             chrf=chrf,
-            normalizer=lowercase_normalizer if getattr(cfg, "eval_lowercase", False) else None,
+            normalizer=(LocalBasicTextNormalizer(remove_diacritics=False).__call__)
+            if getattr(cfg, "eval_lowercase", False)
+            else None,
         )
     else:
         wer = evaluate.load("wer")
@@ -310,6 +313,7 @@ def run_finetuning(
         baseline_eval_results=baseline_eval_results,
         ft_eval_results=eval_results,
         task=cfg.task,
+        metric=cfg.metric
     )
     model_card.save(f"{local_output_dir}/README.md")
 

@@ -115,18 +115,29 @@ def compute_bleu_chrf_metrics(
 
 
 def lowercase_normalizer(text: str) -> str:
-    """Normalize text for multilingual translation metrics by lowercasing while
-    preserving punctuation and spacing. Uses NFKC to normalize Unicode forms,
-    then lowercases. Safe for Cyrillic (e.g., Bulgarian).
+    """Normalize text for multilingual metrics by lowercasing and removing punctuation.
+
+    Steps:
+    - Unicode NFKC normalization
+    - Lowercase
+    - Remove all Unicode punctuation (category starting with 'P')
+    - Collapse consecutive whitespace to a single space and strip
+
+    Safe for Cyrillic (e.g., Bulgarian) and other scripts.
 
     Args:
         text: input string
     Returns:
-        normalized string (case-folded, punctuation kept)
+        normalized string (case-folded, punctuation removed)
     """
     if text is None:
         return ""
-    return unicodedata.normalize("NFKC", text).lower()
+    s = unicodedata.normalize("NFKC", text).lower()
+    # Drop all punctuation across Unicode categories (Pc, Pd, Ps, Pe, Pi, Pf, Po)
+    s = "".join(ch for ch in s if not unicodedata.category(ch).startswith("P"))
+    # Normalize whitespace
+    s = " ".join(s.split())
+    return s
 
 
 def get_hf_username() -> str:
@@ -143,12 +154,13 @@ def create_model_card(
     baseline_eval_results: Dict,
     ft_eval_results: Dict,
     task: str = "transcribe",
+    metric: str = "bleu"
 ) -> ModelCard:
     """
     Create and upload a custom Model Card (https://huggingface.co/docs/hub/model-cards) to the Hugging Face repo
     of the finetuned model that highlights the evaluation results before and after finetuning.
     """
-    if task == "translate":
+    if metric == "bleu":
         primary_metric_name = "bleu"
         primary_metric_value = (
             round(ft_eval_results.get("eval_bleu", 0.0), 3)
