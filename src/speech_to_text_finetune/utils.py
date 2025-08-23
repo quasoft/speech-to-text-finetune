@@ -208,18 +208,18 @@ This model was created from the Mozilla.ai Blueprint:
 ## Evaluation results on {n_eval_samples} audio samples of {language}:
 
 ### Baseline model (before finetuning) on {language}
-{"- BLEU: " + str(round(baseline_eval_results.get('eval_bleu', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Normalized): {round(baseline_eval_results['eval_wer'], 3)}"}
-{"- chrF: " + str(round(baseline_eval_results.get('eval_chrf', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Orthographic): {round(baseline_eval_results['eval_wer_ortho'], 3)}"}
-{'' if task=='translate' else f"- Character Error Rate (Normalized): {round(baseline_eval_results['eval_cer'], 3)}"}
-{'' if task=='translate' else f"- Character Error Rate (Orthographic): {round(baseline_eval_results['eval_cer_ortho'], 3)}"}
+{"- BLEU: " + str(round(baseline_eval_results.get('eval_bleu', 0.0), 3)) if metric == "bleu" else f"- Word Error Rate (Normalized): {round(baseline_eval_results['eval_wer'], 3)}"}
+{"- chrF: " + str(round(baseline_eval_results.get('eval_chrf', 0.0), 3)) if metric == "bleu" else f"- Word Error Rate (Orthographic): {round(baseline_eval_results['eval_wer_ortho'], 3)}"}
+{'' if metric == "bleu" else f"- Character Error Rate (Normalized): {round(baseline_eval_results['eval_cer'], 3)}"}
+{'' if metric == "bleu" else f"- Character Error Rate (Orthographic): {round(baseline_eval_results['eval_cer_ortho'], 3)}"}
 - Loss: {round(baseline_eval_results["eval_loss"], 3)}
 
 ### Finetuned model (after finetuning) on {language}
 
-{"- BLEU: " + str(round(ft_eval_results.get('eval_bleu', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Normalized): {round(ft_eval_results['eval_wer'], 3)}"}
-{"- chrF: " + str(round(ft_eval_results.get('eval_chrf', 0.0), 3)) if task=='translate' else f"- Word Error Rate (Orthographic): {round(ft_eval_results['eval_wer_ortho'], 3)}"}
-{'' if task=='translate' else f"- Character Error Rate (Normalized): {round(ft_eval_results['eval_cer'], 3)}"}
-{'' if task=='translate' else f"- Character Error Rate (Orthographic): {round(ft_eval_results['eval_cer_ortho'], 3)}"}
+{"- BLEU: " + str(round(ft_eval_results.get('eval_bleu', 0.0), 3)) if metric == "bleu" else f"- Word Error Rate (Normalized): {round(ft_eval_results['eval_wer'], 3)}"}
+{"- chrF: " + str(round(ft_eval_results.get('eval_chrf', 0.0), 3)) if metric == "bleu" else f"- Word Error Rate (Orthographic): {round(ft_eval_results['eval_wer_ortho'], 3)}"}
+{'' if metric == "bleu" else f"- Character Error Rate (Normalized): {round(ft_eval_results['eval_cer'], 3)}"}
+{'' if metric == "bleu" else f"- Character Error Rate (Orthographic): {round(ft_eval_results['eval_cer_ortho'], 3)}"}
 - Loss: {round(ft_eval_results["eval_loss"], 3)}
 """
 

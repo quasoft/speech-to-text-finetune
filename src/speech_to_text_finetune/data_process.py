@@ -11,7 +11,14 @@ from dataclasses import dataclass
 from typing import Dict, List, Union, Tuple
 
 from transformers import WhisperProcessor
-from datasets import load_dataset, DatasetDict, Audio, Dataset, load_from_disk
+from datasets import (
+    load_dataset,
+    DatasetDict,
+    Audio,
+    Dataset,
+    load_from_disk,
+    concatenate_datasets,
+)
 from loguru import logger
 
 
@@ -199,6 +206,65 @@ def _load_generic_hf_audio_text_dataset(dataset_id: str) -> DatasetDict:
     # Optionally narrow columns to at least what downstream expects; keep others for potential later analysis.
     # Do not call select_columns here to avoid dropping user metadata prematurely; processing later will prune.
     return ds
+
+
+def upsample_films_and_interviews(
+    ds: Dataset,
+    domain_col: str = "domain",
+    factor: int = 3,
+    seed: int = 42,
+) -> Dataset:
+    """Upsample only the "Films" and "Interviews" domains by a fixed factor.
+
+    This duplicates examples from the target domains while keeping all other
+    domains at their original count. The resulting dataset is shuffled.
+
+    Args:
+        ds: Input Hugging Face Dataset with a domain metadata column.
+        domain_col: Column name that contains the domain label (default: "domain").
+        factor: Replication factor for target domains (factor=1 returns the input unchanged).
+        seed: RNG seed used for the final shuffle.
+
+    Returns:
+        A new Dataset with "Films" and "Interviews" samples upsampled.
+    """
+    if factor <= 1:
+        return ds
+    if domain_col not in ds.column_names:
+        logger.warning(
+            f"upsample_films_and_interviews: column '{domain_col}' not found; returning dataset unchanged."
+        )
+        return ds
+
+    target_domains = {"Films", "Interviews"}
+
+    try:
+        # Partition dataset once to avoid accidental double counting
+        others = ds.filter(lambda x: x[domain_col] not in target_domains)
+        parts = [others]
+        present_any = False
+
+        for dom in sorted(target_domains):
+            sub = ds.filter(lambda x, d=dom: x[domain_col] == d)
+            if sub.num_rows == 0:
+                continue
+            # include original once plus (factor-1) extra copies
+            parts.append(sub)
+            for _ in range(factor - 1):
+                parts.append(sub)
+            present_any = True
+
+        if not present_any:
+            logger.info(
+                "upsample_films_and_interviews: no 'Films'/'Interviews' rows found; returning dataset unchanged."
+            )
+            return ds
+
+        upsampled = concatenate_datasets(parts).shuffle(seed=seed)
+        return upsampled
+    except Exception as e:
+        logger.warning(f"upsample_films_and_interviews failed ({e}); returning dataset unchanged.")
+        return ds
 
 
 def _load_local_common_voice(cv_data_dir: str) -> DatasetDict:
