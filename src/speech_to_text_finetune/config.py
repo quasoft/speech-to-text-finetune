@@ -81,5 +81,23 @@ class Config(BaseModel):
     upsample_domains: bool = False
     upsample_domains_factor: int = 3
 
+    # Optional: Parameter-Efficient Fine-Tuning (LoRA) without Unsloth
+    # Kept at the top level so they are NOT forwarded to Seq2SeqTrainingArguments
+    use_lora: bool = False
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    # Typical targets for Whisper attention; can be customized if needed
+    lora_target_modules: list[str] = ["q_proj", "v_proj"]
+    lora_bias: str = "none"  # "none" | "all" | "lora_only"
+    # Merge LoRA adapters into the base model after training and save
+    merge_lora_on_save: bool = False
+    # If set and push_to_hub is enabled, push the merged model to this repo id
+    push_merged_repo_id: str | None = None
+
+    # Optional quantization flags for base model loading (require bitsandbytes if enabled)
+    load_in_8bit: bool = False
+    load_in_4bit: bool = False
+
 
 PROC_DATASET_DIR = "processed_version"

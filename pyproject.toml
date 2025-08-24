@@ -32,6 +32,14 @@ tests = [
   "pytest-sugar>=0.9.6",
 ]
 
+# Optional extras for parameter-efficient fine-tuning and quantization
+peft = [
+  "peft>=0.13.2",
+]
+bnb = [
+  "bitsandbytes>=0.43",
+]
+
 [project.urls]
 Documentation = "https://mozilla-ai.github.io/speech-to-text-finetune/"
 Issues = "https://github.com/mozilla-ai/speech-to-text-finetune/issues"

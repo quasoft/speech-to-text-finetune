@@ -21,6 +21,21 @@ import evaluate
 from loguru import logger
 
 from speech_to_text_finetune.config import load_config
+from typing import Optional
+
+# Optional PEFT for LoRA fine-tuning (no Unsloth dependency)
+try:
+    from peft import (
+        LoraConfig,
+        get_peft_model,
+        PeftModel,
+        TaskType,
+    )
+except Exception:  # pragma: no cover - optional dependency
+    LoraConfig = None  # type: ignore
+    get_peft_model = None  # type: ignore
+    PeftModel = None  # type: ignore
+    TaskType = None  # type: ignore
 from speech_to_text_finetune.data_process import (
     DataCollatorSpeechSeq2SeqWithPadding,
     load_dataset_from_dataset_id,
@@ -82,7 +97,13 @@ def run_finetuning(
     processor = WhisperProcessor.from_pretrained(
         cfg.model_id, language=cfg.language, task=cfg.task
     )
-    model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id)
+    # Optionally load base model with 8-bit/4-bit if requested (requires bitsandbytes)
+    model_kwargs: Dict = {}
+    if getattr(cfg, "load_in_8bit", False):
+        model_kwargs["load_in_8bit"] = True
+    if getattr(cfg, "load_in_4bit", False):
+        model_kwargs["load_in_4bit"] = True
+    model = WhisperForConditionalGeneration.from_pretrained(cfg.model_id, **model_kwargs)
     # Do not rely on forced_decoder_ids; prefer prompt_ids in GenerationConfig
     model.config.forced_decoder_ids = None
     # disable cache during training since it's incompatible with gradient checkpointing
@@ -129,6 +150,27 @@ def run_finetuning(
     model.generation_config = generation_config
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
+
+    # If enabled, wrap model with LoRA adapters using PEFT
+    if getattr(cfg, "use_lora", False):
+        if LoraConfig is None or get_peft_model is None:
+            raise ImportError(
+                "PEFT is not installed. Install with `pip install peft` or disable use_lora in the config."
+            )
+        # Whisper is a seq2seq model; use SEQ_2_SEQ_LM task type
+        lora_cfg = LoraConfig(
+            r=int(cfg.lora_r),
+            lora_alpha=int(cfg.lora_alpha),
+            lora_dropout=float(cfg.lora_dropout),
+            target_modules=list(getattr(cfg, "lora_target_modules", ["q_proj", "v_proj"])),
+            bias=getattr(cfg, "lora_bias", "none"),
+            task_type=TaskType.SEQ_2_SEQ_LM,
+        )
+        model = get_peft_model(model, lora_cfg)
+        logger.info(
+            f"Enabled LoRA: r={lora_cfg.r}, alpha={lora_cfg.lora_alpha}, dropout={lora_cfg.lora_dropout}, "
+            f"targets={lora_cfg.target_modules}, bias={lora_cfg.bias}"
+        )
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=local_output_dir,
@@ -339,6 +381,41 @@ def run_finetuning(
         metric=cfg.metric
     )
     model_card.save(f"{local_output_dir}/README.md")
+
+    # Optionally merge LoRA adapters into the base model and save/push merged weights
+    def _merge_and_save_if_needed(output_dir: str) -> Optional[str]:
+        if not getattr(cfg, "use_lora", False) or not getattr(cfg, "merge_lora_on_save", False):
+            return None
+        if PeftModel is None or not isinstance(model, PeftModel):  # type: ignore[arg-type]
+            logger.warning("merge_lora_on_save is set but model is not a PEFT model; skipping merge.")
+            return None
+        merged_dir = os.path.join(output_dir, "merged")
+        os.makedirs(merged_dir, exist_ok=True)
+        base = model.merge_and_unload()  # returns a standard HF model with LoRA merged
+        base.save_pretrained(merged_dir, safe_serialization=cfg.training_hp.save_safetensors)
+        processor.save_pretrained(merged_dir)
+        # Save generation config alongside merged model
+        try:
+            generation_config.save_pretrained(merged_dir)
+        except Exception as e:
+            logger.warning(f"Failed to save merged generation_config: {e}")
+        logger.info(f"Merged model saved to {merged_dir}")
+        # Optionally push to a separate repo
+        if cfg.training_hp.push_to_hub and getattr(cfg, "push_merged_repo_id", None):
+            from huggingface_hub import HfApi
+            api = HfApi()
+            try:
+                api.create_repo(repo_id=cfg.push_merged_repo_id, private=cfg.training_hp.hub_private_repo, exist_ok=True)
+            except Exception:
+                pass
+            try:
+                api.upload_folder(repo_id=cfg.push_merged_repo_id, repo_type="model", folder_path=merged_dir)
+                logger.info(f"Merged model pushed to {cfg.push_merged_repo_id}")
+            except Exception as e:
+                logger.warning(f"Failed to push merged model: {e}")
+        return merged_dir
+
+    merged_dir = _merge_and_save_if_needed(training_args.output_dir)
 
     if cfg.training_hp.push_to_hub:
         logger.info(f"Uploading model and eval results to HuggingFace: {hf_repo_name}")
